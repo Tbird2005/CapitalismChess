@@ -213,6 +213,8 @@
   button.warn{background:linear-gradient(180deg,#694526,#3d291a);border-color:#7d5a30}
   button.danger{background:linear-gradient(180deg,#703144,#41212b);border-color:#83364f}
   button.full{grid-column:1/-1}
+  button.castleNow{background:linear-gradient(180deg,#55417a,#342a4f);border-color:#8364c7;color:#f5efff}
+  button.castleNow:not(:disabled){box-shadow:0 0 14px rgba(131,100,199,.28)}
   .bookLink{display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;border:1px solid #4c6790;background:linear-gradient(180deg,#263d5c,#18283f);color:#e7f3ff;border-radius:12px;padding:10px;font-weight:950;margin-top:8px}
   .bookLink:hover{filter:brightness(1.12);transform:translateY(-1px)}
   #endTurnBtn{font-size:18px;min-height:58px;border-width:3px;text-transform:uppercase;letter-spacing:.9px;background:linear-gradient(180deg,#3e693f,#1d4a27);border-color:#7af28a;box-shadow:0 0 0 2px rgba(122,242,138,.12),0 12px 30px rgba(0,0,0,.33)}
@@ -233,10 +235,71 @@
   .cardRevealPanel h2{margin:0 0 10px;font-size:20px}
   .cardRevealPanel img{width:min(64vw,260px);max-height:380px;object-fit:contain;border-radius:12px;box-shadow:0 14px 38px rgba(0,0,0,.55)}
   .cardCaption{margin-top:10px;color:var(--muted);font-size:13px;font-weight:800}
+
+  .menuScreen{
+    position:fixed;
+    inset:0;
+    z-index:120;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:22px;
+    background:radial-gradient(circle at top,#25324a 0,#0d111b 55%,#05070b 100%);
+  }
+  .menuCard{
+    width:min(94vw,560px);
+    background:rgba(20,25,37,.96);
+    border:1px solid #3b465e;
+    border-radius:24px;
+    padding:26px;
+    box-shadow:0 28px 110px rgba(0,0,0,.62);
+    text-align:center;
+  }
+  .menuTitle{font-size:clamp(34px,7vw,56px);font-weight:1000;margin:0;letter-spacing:.6px;color:#f4f7ff;text-shadow:0 4px 20px rgba(0,0,0,.55)}
+  .menuSub{color:var(--muted);font-weight:750;line-height:1.4;margin:10px auto 20px;max-width:460px}
+  .menuActions{display:grid;grid-template-columns:1fr;gap:12px;margin-top:16px}
+  .menuActions button{min-height:60px;font-size:20px;border-radius:16px;border-width:2px}
+  .menuActions button.bigPrimary{background:linear-gradient(180deg,#317a48,#1b4f2d);border-color:#76ef93;box-shadow:0 0 0 2px rgba(118,239,147,.12)}
+  .menuActions button.bigWarn{background:linear-gradient(180deg,#755228,#412c18);border-color:#e7a04e;box-shadow:0 0 0 2px rgba(231,160,78,.12)}
+  .menuInput{width:100%;border:2px solid #3b465e;background:#0b1018;color:#fff;border-radius:16px;padding:16px;font-size:24px;text-align:center;font-weight:1000;letter-spacing:4px;outline:none;text-transform:none;font-family:ui-monospace,Consolas,monospace}
+  .menuInput:focus{border-color:#75e8ff;box-shadow:0 0 0 3px rgba(117,232,255,.16)}
+  .menuSmall{font-size:12px;color:var(--muted);line-height:1.35;margin-top:12px}
+  .netToast{position:fixed;left:50%;top:16px;transform:translateX(-50%);z-index:140;max-width:min(94vw,640px);background:linear-gradient(180deg,#7a3041,#421b25);border:2px solid #ff7d8f;color:#fff;border-radius:16px;padding:14px 18px;font-weight:950;box-shadow:0 14px 45px rgba(0,0,0,.5);text-align:center}
+
   .hidden{display:none!important}
 </style>
 </head>
 <body>
+
+<div class="menuScreen" id="mainMenu">
+  <div class="menuCard">
+    <h2 class="menuTitle">Capitalism Chess</h2>
+    <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
+    <div class="menuActions">
+      <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
+      <button id="playMultiplayerMenuBtn" class="bigWarn">Play Multiplayer</button>
+    </div>
+    <a class="bookLink" href="https://file.garden/ZtDesvPK_QLwMx9K/HTML/CapitalismChessRulesfixv3.pdf" target="_blank" rel="noopener">📖 Open Rulebook PDF</a>
+    <div class="menuSmall">Gold always moves first. Gold and Diamond sides are randomized when the game is reset.</div>
+  </div>
+</div>
+
+<div class="menuScreen hidden" id="multiplayerMenu">
+  <div class="menuCard">
+    <h2 class="menuTitle">Multiplayer</h2>
+    <div class="menuSub">Host creates a room code. The other player types that exact 4 character code. Capital letters matter.</div>
+    <div class="menuActions">
+      <button id="menuHostBtn" class="bigPrimary">Host a Game</button>
+      <input id="menuJoinCodeInput" class="menuInput" placeholder="Code" maxlength="4" autocomplete="off" spellcheck="false" />
+      <button id="menuJoinBtn" class="bigWarn">Join With Code</button>
+      <button id="menuBackBtn">Back</button>
+    </div>
+    <div class="menuSmall" id="menuNetStatus">Use the room code shown after hosting. Do not use the website URL as the room code.</div>
+  </div>
+</div>
+
+<div class="netToast hidden" id="netAlert"></div>
+
 <header>
   <div>
     <h1>Capitalism Chess Online</h1>
@@ -257,7 +320,7 @@
       <div class="onlineGrid">
         <button id="hostGameBtn" class="primary">Host Online Game</button>
         <button id="disconnectNetBtn" class="danger">Disconnect</button>
-        <input id="joinCodeInput" class="onlineInput" placeholder="Room code" />
+        <input id="joinCodeInput" class="onlineInput" placeholder="4 character code" maxlength="4" autocomplete="off" spellcheck="false" />
         <button id="joinGameBtn" class="warn">Join Online Game</button>
         <button id="copyLinkBtn" class="full">Copy Room Code</button>
       </div>
@@ -301,16 +364,18 @@
   <aside class="rightRail">
     <section class="panel">
       <div class="controls">
-        <button id="buyLandBtn" class="primary">Buy Land</button>
-        <button id="buyGenBtn" class="primary">Buy Gen Chip</button>
-        <button id="customGenBtn" class="warn">Build XX Gen</button>
-        <button id="doubleMoveBtn" class="warn">Buy Double Move</button>
-        <button id="drawCardBtn">Draw Piece Card</button>
-        <button id="goldDiceBtn">Gold Dice</button>
-        <button id="castleBtn">Buy Castling Rights</button>
-        <button id="teleportBtn">King Teleport</button>
-        <button id="resurrectBtn">Resurrect</button>
-        <button id="goldBarBtn" class="primary">Buy Gold Bar</button>
+        <button id="buyLandBtn" class="primary">Buy Land (1/2/3g)</button>
+        <button id="buyGenBtn" class="primary">Buy Gen Chip (5/8g)</button>
+        <button id="customGenBtn" class="warn">Build XX Gen (30g)</button>
+        <button id="doubleMoveBtn" class="warn">Buy Double Move (6g)</button>
+        <button id="drawCardBtn">Draw Piece Card (5g)</button>
+        <button id="goldDiceBtn">Gold Dice (15g)</button>
+        <button id="castleBtn">Buy Castling Rights (3g)</button>
+        <button id="castleKingBtn" class="castleNow">Castle Kingside</button>
+        <button id="castleQueenBtn" class="castleNow">Castle Queenside</button>
+        <button id="teleportBtn">King Teleport (10g)</button>
+        <button id="resurrectBtn">Resurrect (8g)</button>
+        <button id="goldBarBtn" class="primary">Buy Gold Bar (100g)</button>
         <button id="endTurnBtn" class="full">✅ END TURN / PASS</button>
       </div>
     </section>
@@ -370,6 +435,12 @@
     N:'https://steamusercontent-a.akamaihd.net/ugc/2057617493352670044/41277D1B6461B5CF8EB0FB9FEC196C5CE829EDD8/',
     R:'https://steamusercontent-a.akamaihd.net/ugc/2057617493352675283/469DC8E26DBAF407571294762342AF2ED3587503/'
   };
+  const SFX_URLS = {
+    move:'https://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/move-self.mp3',
+    notify:'https://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/notify.mp3',
+    capture:'https://images.chesscomfiles.com/chess-themes/sounds/_MP3_/default/capture.mp3',
+    purchase:'https://file.garden/ZtDesvPK_QLwMx9K/HTML/txt/cash-register-kaching-sound-effect-hd_Ci5WPtC.mp3'
+  };
   const defaultGenerators = new Set(['3,3','3,4','4,3','4,4']);
   let state;
   let nextPieceId = 1;
@@ -386,7 +457,10 @@
     localOwner:PLAYER,
     remoteOwner:AI,
     status:'Offline local mode. Use this as normal single player or AI vs AI.',
-    joinTimer:null
+    joinTimer:null,
+    heartbeatTimer:null,
+    lastSeen:0,
+    suppressCloseAlert:false
   };
 
   const el = id => document.getElementById(id);
@@ -397,6 +471,32 @@
   const coord = (r,c) => files[c] + (8-r);
   const matrix = fill => Array.from({length:SIZE},()=>Array.from({length:SIZE},()=> typeof fill === 'function' ? fill() : fill));
   const deepClone = obj => JSON.parse(JSON.stringify(obj));
+
+  function playSfx(kind, broadcast=true){
+    const url = SFX_URLS[kind];
+    if(!url) return;
+    try{
+      const a = new Audio(url);
+      a.volume = kind === 'purchase' ? 0.48 : 0.58;
+      a.play().catch(()=>{});
+    }catch(e){}
+    if(broadcast && isOnlineHost() && net.conn && net.conn.open){
+      try{ net.conn.send({type:'sound', kind}); }catch(e){}
+    }
+  }
+
+  function purchaseSfx(){ playSfx('purchase'); }
+
+  function generateRoomCode(){
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    let out = '';
+    for(let i=0;i<4;i++) out += chars[Math.floor(Math.random()*chars.length)];
+    return out;
+  }
+
+  function validRoomCode(code){
+    return /^[A-Za-z0-9]{4}$/.test(code);
+  }
 
   function createInitialState(){
     nextPieceId = 1;
@@ -450,9 +550,19 @@
     };
   }
 
-  function addPiece(s, owner, type, r, c){
+  function addPiece(s, owner, type, r, c, opts={}){
     const id = 'p' + nextPieceId++;
-    s.pieces[id] = {id,owner,type,r,c,moved:false,captured:false,knightFeePaid:type !== 'N'};
+    const castleOriginal = !!opts.castleOriginal;
+    s.pieces[id] = {
+      id,owner,type,r,c,
+      moved:false,
+      captured:false,
+      knightFeePaid:type !== 'N',
+      castleOriginal,
+      castleHomeOwner: castleOriginal ? owner : null,
+      castleHomeRow: castleOriginal ? r : null,
+      castleHomeCol: castleOriginal ? c : null
+    };
     s.board[r][c] = id;
     return id;
   }
@@ -460,10 +570,12 @@
   function setupPieces(s){
     const back = ['R','N','B','Q','K','B','N','R'];
     for(let c=0;c<8;c++){
-      addPiece(s, AI, back[c], 0, c);
+      const aiBack = back[c];
+      const playerBack = back[c];
+      addPiece(s, AI, aiBack, 0, c, {castleOriginal:['R','K'].includes(aiBack)});
       addPiece(s, AI, 'P', 1, c);
       addPiece(s, PLAYER, 'P', 6, c);
-      addPiece(s, PLAYER, back[c], 7, c);
+      addPiece(s, PLAYER, playerBack, 7, c, {castleOriginal:['R','K'].includes(playerBack)});
     }
   }
 
@@ -614,6 +726,7 @@
     state.turn = other(current);
     state.turnNumber++;
     startTurn(state.turn);
+    playSfx('notify');
     render();
     scheduleAutoTurn(520);
   }
@@ -702,19 +815,40 @@
     return moves;
   }
 
+  function isOriginalCastlePiece(p, owner, type, homeCol){
+    return !!p && !p.captured && p.owner === owner && p.type === type &&
+      p.castleOriginal === true && p.castleHomeOwner === owner &&
+      p.castleHomeRow === backRankRow(owner) && p.castleHomeCol === homeCol &&
+      p.r === backRankRow(owner) && p.c === homeCol && !p.moved;
+  }
+
+  function castleInfo(owner, side, selectedKing=null){
+    const ps = state.players[owner];
+    const row = backRankRow(owner);
+    const kingTo = side === 'king' ? 6 : 2;
+    const rookFrom = side === 'king' ? 7 : 0;
+    const rookTo = side === 'king' ? 5 : 3;
+    const special = side === 'king' ? 'castleKing' : 'castleQueen';
+    if(!ps) return {ok:false, reason:'No player state.'};
+    if(ps.castlingUsed) return {ok:false, reason:'Castling was already used.'};
+    if(ps.castlingRightsTurn == null) return {ok:false, reason:'Buy Castling Rights first.'};
+    if(ps.castlingRightsTurn >= state.turnNumber) return {ok:false, reason:'Castling Rights cannot be used until your next turn.'};
+    const king = selectedKing || getPieceAt(row,4);
+    if(!isOriginalCastlePiece(king, owner, 'K', 4)) return {ok:false, reason:'Only the original unmoved king on its starting square can castle.'};
+    const rook = getPieceAt(row, rookFrom);
+    if(!isOriginalCastlePiece(rook, owner, 'R', rookFrom)) return {ok:false, reason:'The original unmoved rook must still be on that corner.'};
+    const pass = side === 'king' ? [5,6] : [1,2,3];
+    for(const c of pass){
+      if(state.board[row][c]) return {ok:false, reason:`Path is blocked at ${coord(row,c)}.`};
+    }
+    return {ok:true, king, rook, row, kingTo, rookFrom, rookTo, move:{r:row,c:kingTo,cost:0,special,note:'castle',capture:false}};
+  }
+
   function addCastleMoves(moves, king){
-    const ps = state.players[king.owner];
-    if(ps.castlingUsed || ps.castlingRightsTurn == null || ps.castlingRightsTurn >= state.turnNumber || king.moved) return;
-    const row = king.r;
-    // Kingside
+    if(!king || king.type !== 'K') return;
     for(const side of ['king','queen']){
-      const rookCol = side === 'king' ? 7 : 0;
-      const rook = getPieceAt(row, rookCol);
-      if(!rook || rook.owner !== king.owner || rook.type !== 'R' || rook.moved) continue;
-      const pass = side === 'king' ? [5,6] : [1,2,3];
-      if(pass.every(c => !state.board[row][c])){
-        moves.push({r:row,c:side==='king'?6:2,cost:0,special:side==='king'?'castleKing':'castleQueen',note:'castle',capture:false});
-      }
+      const info = castleInfo(king.owner, side, king);
+      if(info.ok) moves.push(info.move);
     }
   }
 
@@ -787,9 +921,8 @@
     if(p.type === 'N') p.knightFeePaid = true;
     const fromR = p.r, fromC = p.c;
     if(move.special === 'castleKing' || move.special === 'castleQueen'){
-      doCastle(p, move.special);
+      if(!doCastle(p, move.special)) return false;
       ps.castlingUsed = true;
-      p.moved = true;
       afterActionMove(owner, isHuman, p.id);
       return true;
     }
@@ -802,6 +935,7 @@
     state.board[move.r][move.c] = p.id;
     p.r = move.r; p.c = move.c; p.moved = true;
     log(`${label(owner)} moved ${p.type} from ${coord(fromR,fromC)} to ${coord(move.r,move.c)}${target ? ' and captured ' + target.type : ''}.`);
+    if(!target) playSfx('move');
     resolveLanding(p);
     maybePromote(p, isHuman);
     if(state.pendingPromotion) { render(); return true; }
@@ -810,20 +944,46 @@
   }
 
   function doCastle(king, special){
-    const row = king.r;
+    const side = special === 'castleKing' ? 'king' : 'queen';
+    const info = castleInfo(king.owner, side, king);
+    if(!info.ok){
+      state.status = info.reason;
+      return false;
+    }
+    const {row, kingTo, rookFrom, rookTo, rook} = info;
     const oldKingC = king.c;
-    const kingTo = special === 'castleKing' ? 6 : 2;
-    const rookFrom = special === 'castleKing' ? 7 : 0;
-    const rookTo = special === 'castleKing' ? 5 : 3;
-    const rook = getPieceAt(row,rookFrom);
     state.board[row][oldKingC] = null;
     state.board[row][kingTo] = king.id;
     king.c = kingTo;
+    king.r = row;
+    king.moved = true;
     state.board[row][rookFrom] = null;
     state.board[row][rookTo] = rook.id;
-    rook.c = rookTo; rook.moved = true;
-    log(`${label(king.owner)} castled.`);
+    rook.r = row;
+    rook.c = rookTo;
+    rook.moved = true;
+    log(`${label(king.owner)} castled ${side === 'king' ? 'kingside' : 'queenside'}. King to ${coord(row,kingTo)}, rook to ${coord(row,rookTo)}.`);
+    playSfx('move');
     resolveLanding(king);
+    if(!state.gameOver) resolveLanding(rook);
+    return true;
+  }
+
+  function castleNow(owner, side, isHuman=true){
+    const ps = state.players[owner];
+    if(state.gameOver || state.turn !== owner || state.pendingPromotion || state.pendingCardPlacement || shouldAutoAct(owner)) return false;
+    if(!(ps && (!ps.usedTurnAction || ps.doubleMovesRemaining > 0))){
+      state.status = 'Castling uses a movement action. You already spent your move action this turn.';
+      render();
+      return false;
+    }
+    const info = castleInfo(owner, side);
+    if(!info.ok){
+      state.status = info.reason;
+      render();
+      return false;
+    }
+    return executeMove(info.king.id, info.move, isHuman);
   }
 
   function afterActionMove(owner, isHuman, movedPieceId=null){
@@ -857,6 +1017,7 @@
       used:false
     };
     log(`${label(capturer.owner)} captured ${label(target.owner)} ${target.type} on ${coord(r,c)}.`);
+    playSfx('capture');
     if(awardGold){
       transferGold(target.owner, capturer.owner, 1, 'capture bounty');
     }
@@ -894,6 +1055,7 @@
       const owner = p.owner;
       if(voluntaryAffordable(owner,3)){
         transferGold(owner, BANK, 3, 'chosen pawn promotion');
+        purchaseSfx();
         p.type = 'Q';
         log(`${label(owner)} promoted a pawn to Queen.`);
       } else {
@@ -913,6 +1075,7 @@
     if(paid){
       if(!voluntaryAffordable(owner,3)) return;
       transferGold(owner, BANK, 3, 'chosen pawn promotion');
+      purchaseSfx();
       p.type = type;
     } else {
       const types = ['Q','R','B','N'];
@@ -938,6 +1101,7 @@
       state.land[p.r][p.c] = owner;
       ps.landPurchases++;
       log(`${label(owner)} used a free land deed on ${coord(p.r,p.c)}.`);
+      purchaseSfx();
       return true;
     }
     if(!voluntaryAffordable(owner, cost)) return false;
@@ -946,6 +1110,7 @@
     state.land[p.r][p.c] = owner;
     ps.landPurchases++;
     log(`${label(owner)} bought land on ${coord(p.r,p.c)}.`);
+    purchaseSfx();
     return true;
   }
 
@@ -961,6 +1126,7 @@
       state.genChip[p.r][p.c] = owner;
       ps.usedTurnAction = true;
       log(`${label(owner)} used a free generator chip on ${coord(p.r,p.c)}.`);
+      purchaseSfx();
       return true;
     }
     const cost = current ? 8 : 5;
@@ -970,6 +1136,7 @@
     state.genChip[p.r][p.c] = owner;
     ps.usedTurnAction = true;
     log(`${label(owner)} bought a generator chip at ${coord(p.r,p.c)}.`);
+    purchaseSfx();
     return true;
   }
 
@@ -983,6 +1150,7 @@
     state.customGen[p.r][p.c] = owner;
     ps.usedTurnAction = true;
     log(`${label(owner)} built a custom XX generator at ${coord(p.r,p.c)}.`);
+    purchaseSfx();
     return true;
   }
 
@@ -993,6 +1161,7 @@
     ps.doubleMovesRemaining = 2;
     state.status = `${label(owner)} bought double move. Make two moves.`;
     log(`${label(owner)} bought a double move.`);
+    purchaseSfx();
     return true;
   }
 
@@ -1023,6 +1192,7 @@
     const deck = cardDeckPieces();
     const pieceType = deck[Math.floor(Math.random()*deck.length)];
     log(`${label(owner)} drew a random piece card: <b>${pieceType}</b>.`);
+    purchaseSfx();
     showCardReveal(`${label(owner)} drew ${pieceType}`, PIECE_CARD_IMAGES[pieceType], `${pieceType} card. Place it on an open back-rank slot.`);
     if(!shouldAutoAct(owner)){
       state.pendingCardPlacement = {owner, pieceType};
@@ -1099,12 +1269,19 @@
 
   function buyCastlingRights(owner=PLAYER){
     const ps = state.players[owner];
-    if(ps.usedTurnAction || ps.doubleMovesRemaining || ps.castlingRightsTurn != null || !voluntaryAffordable(owner,3)) return false;
+    if(ps.usedTurnAction || ps.doubleMovesRemaining || ps.castlingRightsTurn != null || ps.castlingUsed || !voluntaryAffordable(owner,3)) return false;
+    const hasCastleMaterial = isOriginalCastlePiece(getPieceAt(backRankRow(owner),4), owner, 'K', 4) &&
+      (isOriginalCastlePiece(getPieceAt(backRankRow(owner),7), owner, 'R', 7) || isOriginalCastlePiece(getPieceAt(backRankRow(owner),0), owner, 'R', 0));
+    if(!hasCastleMaterial){
+      state.status = 'Castling Rights need your original king and at least one original unmoved rook still on their starting squares.';
+      return false;
+    }
     if(!transferGold(owner,BANK,3,'for castling rights')) return false;
     ps.castlingRightsTurn = state.turnNumber;
     ps.usedTurnAction = true;
     showCardReveal(`${label(owner)} bought Castling Rights`, CASTLE_CARD, 'Castle certificate. It can be used starting next turn.');
     log(`${label(owner)} bought castling rights. It can be used next turn.`);
+    purchaseSfx();
     return true;
   }
 
@@ -1141,6 +1318,8 @@
     king.r = r; king.c = c; king.moved = true;
     state.board[r][c] = king.id;
     log(`${label(owner)} teleported king from ${old} to ${coord(r,c)}.`);
+    purchaseSfx();
+    playSfx('move');
     resolveLanding(king);
     ps.usedTurnAction = true;
     state.status = `${label(owner)} teleported king.`;
@@ -1166,6 +1345,7 @@
       occupant.captured = true;
       state.board[r][c] = null;
       log(`${label(owner)} resurrection captured ${label(occupant.owner)} ${occupant.type} with no gold bounty.`);
+      playSfx('capture');
     } else if(occupant && occupant.owner === owner){
       log(`${label(owner)} resurrection failed because the square is occupied by a friendly piece.`);
       lc.used = true;
@@ -1179,6 +1359,7 @@
     lc.used = true;
     ps.usedTurnAction = true;
     log(`${label(owner)} resurrected ${data.type} on ${coord(r,c)}.`);
+    purchaseSfx();
     return true;
   }
 
@@ -1189,6 +1370,7 @@
     const faces = ['P','N','B','R','Q','K','X'];
     const roll = faces[Math.floor(Math.random()*faces.length)];
     log(`${label(owner)} rolled Gold Dice: <b>${roll}</b>.`);
+    purchaseSfx();
     if(roll !== 'X'){
       let count = 0;
       for(const p of Object.values(state.pieces)){
@@ -1206,6 +1388,7 @@
   function buyGoldBar(owner=PLAYER){
     if(state.players[owner].gold < 100) return false;
     state.players[owner].gold -= 100;
+    purchaseSfx();
     endGame(owner, `${label(owner)} purchased the 100 gold bar.`);
     return true;
   }
@@ -1323,6 +1506,7 @@
       score += pieceValues[target.type] * 7 + 3;
       if(target.type === 'K') score += 28;
     }
+    if(mv.special === 'castleKing' || mv.special === 'castleQueen') score += 4;
     if(mv.cost) score -= mv.cost * 3.2;
     const landOwner = state.land[mv.r][mv.c];
     if(landOwner === p.owner) score += 1.1;
@@ -1675,6 +1859,31 @@
     return p && !p.captured && p.owner === owner ? p : null;
   }
 
+  function priceText(cost, fallback='select piece'){
+    if(cost === Infinity || cost == null || Number.isNaN(cost)) return fallback;
+    return `${cost}g`;
+  }
+
+  function setControlPrices(owner, p){
+    const ps = state.players[owner];
+    const landCost = p ? landPurchaseCostAt(p.r,p.c,owner) : Infinity;
+    const genCost = p ? genChipCostAt(p.r,p.c,owner) : Infinity;
+    const landLabel = ps.freeLand ? 'FREE' : priceText(landCost, p ? 'Owned' : '1/2/3g');
+    const genLabel = ps.freeGenChip ? 'FREE' : priceText(genCost, p ? 'N/A' : '5/8g');
+    el('buyLandBtn').textContent = `Buy Land (${landLabel})`;
+    el('buyGenBtn').textContent = `Buy Gen Chip (${genLabel})`;
+    el('customGenBtn').textContent = p && state.customGen[p.r][p.c] ? 'XX Gen Already Here' : 'Build XX Gen (30g)';
+    el('doubleMoveBtn').textContent = 'Buy Double Move (6g)';
+    el('drawCardBtn').textContent = openBackRankSlots(owner).length ? 'Draw Piece Card (5g)' : 'Draw Piece Card (No Slot)';
+    el('goldDiceBtn').textContent = 'Gold Dice (15g)';
+    el('castleBtn').textContent = ps.castlingUsed ? 'Castling Used' : (ps.castlingRightsTurn != null ? 'Castling Rights Owned' : 'Buy Castling Rights (3g)');
+    el('castleKingBtn').textContent = 'Castle Kingside (owned)';
+    el('castleQueenBtn').textContent = 'Castle Queenside (owned)';
+    el('teleportBtn').textContent = 'King Teleport (10g)';
+    el('resurrectBtn').textContent = 'Resurrect Last Capture (8g)';
+    el('goldBarBtn').textContent = `Buy Gold Bar (100g)`;
+  }
+
   function renderControls(){
     const owner = effectiveLocalOwner();
     const ps = state.players[owner];
@@ -1682,7 +1891,9 @@
     const waitingForOpponent = onlineWaitingForOpponent();
     const localHumanTurn = !waitingForOpponent && state.turn === owner && !state.gameOver && !state.pendingPromotion && !state.pendingCardPlacement && !shouldAutoAct(owner);
     const canAct = localHumanTurn && !ps.usedTurnAction && ps.doubleMovesRemaining <= 0;
+    const canMoveAction = localHumanTurn && (!ps.usedTurnAction || ps.doubleMovesRemaining > 0);
     const landCost = p ? landPurchaseCostAt(p.r,p.c,owner) : Infinity;
+    setControlPrices(owner, p);
     el('buyLandBtn').disabled = !(localHumanTurn && p && state.land[p.r][p.c] !== owner && ps.landPurchases < 2 && (ps.freeLand || voluntaryAffordable(owner,landCost)));
     const genCost = p ? genChipCostAt(p.r,p.c,owner) : Infinity;
     el('buyGenBtn').disabled = !(canAct && p && isDefaultGen(p.r,p.c) && state.genChip[p.r][p.c] !== owner && (ps.freeGenChip || voluntaryAffordable(owner,genCost)));
@@ -1690,7 +1901,17 @@
     el('doubleMoveBtn').disabled = !(localHumanTurn && !ps.usedTurnAction && !ps.doubleMovesRemaining && voluntaryAffordable(owner,6));
     el('drawCardBtn').disabled = !(canAct && canDrawPieceCard(owner));
     el('goldDiceBtn').disabled = !(canAct && voluntaryAffordable(owner,15));
-    el('castleBtn').disabled = !(canAct && ps.castlingRightsTurn == null && voluntaryAffordable(owner,3));
+    const castleBuyLegal = canAct && ps.castlingRightsTurn == null && !ps.castlingUsed && voluntaryAffordable(owner,3);
+    const canCastleK = canMoveAction && castleInfo(owner,'king').ok;
+    const canCastleQ = canMoveAction && castleInfo(owner,'queen').ok;
+    const castleBtn = el('castleBtn');
+    castleBtn.disabled = !castleBuyLegal;
+    castleBtn.textContent = ps.castlingUsed ? 'Castling Used' : (ps.castlingRightsTurn != null ? 'Castling Rights Owned' : 'Buy Castling Rights (3g)');
+    castleBtn.title = ps.castlingRightsTurn != null && !ps.castlingUsed ? 'Use Castle Kingside or Castle Queenside when legal.' : 'Buy the castle certificate for 3 gold. It can be used starting next turn.';
+    el('castleKingBtn').disabled = !canCastleK;
+    el('castleQueenBtn').disabled = !canCastleQ;
+    el('castleKingBtn').title = canCastleK ? 'Castle kingside now. Both king and rook resolve landing effects.' : castleInfo(owner,'king').reason;
+    el('castleQueenBtn').title = canCastleQ ? 'Castle queenside now. Both king and rook resolve landing effects.' : castleInfo(owner,'queen').reason;
     el('teleportBtn').disabled = !(canAct && hasKing(owner) && voluntaryAffordable(owner,10));
     el('resurrectBtn').disabled = !(canAct && canResurrect(owner));
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
@@ -1733,7 +1954,7 @@
     choices.innerHTML = '';
     for(const t of ['Q','R','B','N']){
       const b = document.createElement('button');
-      b.textContent = symbols[owner][t];
+      b.textContent = `${symbols[owner][t]} 3g`;
       b.title = `Choose ${t} for 3 gold`;
       b.disabled = !voluntaryAffordable(owner,3);
       b.addEventListener('click',()=>localAction('promote', {type:t, paid:true}));
@@ -1785,7 +2006,7 @@
   function isOnlineGuest(){ return net.mode === 'online' && net.role === 'guest'; }
 
   function onlineWaitingForOpponent(){
-    return (net.mode === 'online' && net.role === 'host' && !net.connected) || net.mode === 'joining';
+    return (net.mode === 'online' && !net.connected) || net.mode === 'joining';
   }
 
   function clockIsPausedForNetwork(){
@@ -1800,14 +2021,19 @@
     const statusEl = el('netStatus');
     if(!statusEl) return;
     const codeText = net.roomCode ? net.roomCode : 'none';
-    el('roomCodeBox').textContent = `Room code: ${codeText}`;
+    el('roomCodeBox').textContent = `Room code: ${codeText}${net.roomCode && net.role === 'host' ? '  • case-sensitive' : ''}`;
     statusEl.textContent = net.status;
+    const menuStatus = el('menuNetStatus');
+    if(menuStatus) menuStatus.textContent = net.status || 'Use the room code shown after hosting.';
     const onlineish = net.mode !== 'local';
     el('copyLinkBtn').disabled = !net.roomCode || net.role !== 'host';
     el('disconnectNetBtn').disabled = !onlineish;
     el('hostGameBtn').disabled = onlineish;
     el('joinGameBtn').disabled = onlineish;
     el('joinCodeInput').disabled = onlineish;
+    if(el('menuHostBtn')) el('menuHostBtn').disabled = onlineish;
+    if(el('menuJoinBtn')) el('menuJoinBtn').disabled = onlineish;
+    if(el('menuJoinCodeInput')) el('menuJoinCodeInput').disabled = onlineish;
   }
 
   function setNetStatus(text){
@@ -1815,13 +2041,103 @@
     renderNetwork();
   }
 
+
+  function showMainMenu(){
+    el('mainMenu')?.classList.remove('hidden');
+    el('multiplayerMenu')?.classList.add('hidden');
+  }
+
+  function showMultiplayerMenu(){
+    el('mainMenu')?.classList.add('hidden');
+    el('multiplayerMenu')?.classList.remove('hidden');
+    const input = el('menuJoinCodeInput');
+    if(input){ input.value = el('joinCodeInput')?.value || ''; setTimeout(()=>input.focus(), 0); }
+  }
+
+  function showGameScreen(){
+    el('mainMenu')?.classList.add('hidden');
+    el('multiplayerMenu')?.classList.add('hidden');
+  }
+
+  function startOfflineFromMenu(){
+    cleanupNetwork(false);
+    showGameScreen();
+    if(state){
+      state.status = `Offline game. You control the ${sideLabel(PLAYER)} side.`;
+      render();
+    }
+  }
+
+  function hostFromMenu(){
+    showGameScreen();
+    hostFriendGame();
+  }
+
+  function joinFromMenu(){
+    const code = (el('menuJoinCodeInput')?.value || '').trim();
+    if(el('joinCodeInput')) el('joinCodeInput').value = code;
+    showGameScreen();
+    joinFriendGame();
+  }
+
+  function showNetAlert(message){
+    const box = el('netAlert');
+    if(!box) return;
+    box.textContent = message;
+    box.classList.remove('hidden');
+    clearTimeout(showNetAlert._timer);
+    showNetAlert._timer = setTimeout(()=>box.classList.add('hidden'), 6500);
+  }
+
+  function notifyPeerDisconnected(message){
+    net.connected = false;
+    net.status = message;
+    stopNetHeartbeat();
+    if(state) state.status = message;
+    showNetAlert(message);
+    render();
+  }
+
+  function stopNetHeartbeat(){
+    if(net.heartbeatTimer){
+      clearInterval(net.heartbeatTimer);
+      net.heartbeatTimer = null;
+    }
+  }
+
+  function startNetHeartbeat(){
+    stopNetHeartbeat();
+    net.lastSeen = Date.now();
+    net.heartbeatTimer = setInterval(()=>{
+      if(!net.conn || !net.conn.open) return;
+      if(Date.now() - net.lastSeen > 15000){
+        notifyPeerDisconnected('Connection lost. The other player stopped responding or closed the page.');
+        try{ net.conn.close(); }catch(e){}
+        return;
+      }
+      try{ net.conn.send({type:'ping', t:Date.now()}); }catch(e){}
+    }, 4000);
+  }
+
+  function sendDisconnectNotice(){
+    try{
+      if(net.conn && net.conn.open){
+        net.conn.send({type:'disconnect'});
+      }
+    }catch(e){}
+  }
+
   function cleanupNetwork(keepStatus=false){
+    net.suppressCloseAlert = true;
+    sendDisconnectNotice();
+    stopNetHeartbeat();
     if(net.joinTimer){
       clearTimeout(net.joinTimer);
       net.joinTimer = null;
     }
     try{ if(net.conn) net.conn.close(); }catch(e){}
     try{ if(net.peer) net.peer.destroy(); }catch(e){}
+    setTimeout(()=>{ net.suppressCloseAlert = false; }, 1200);
     net.mode = 'local';
     net.role = 'local';
     net.peer = null;
@@ -1843,15 +2159,21 @@
   function hostFriendGame(){
     if(!window.Peer){ setNetStatus('PeerJS did not load. Host this on GitHub Pages and make sure you have internet.'); return; }
     cleanupNetwork(true);
+    startHostPeer(0);
+  }
+
+  function startHostPeer(attempt=0){
     net.mode = 'online';
     net.role = 'host';
     net.localOwner = PLAYER;
     net.remoteOwner = AI;
-    net.status = 'Creating room...';
-    net.peer = new Peer();
+    net.connected = false;
+    net.roomCode = generateRoomCode();
+    net.status = 'Creating 4 character room code...';
+    net.peer = new Peer(net.roomCode);
     net.peer.on('open', id => {
       net.roomCode = id;
-      net.status = 'Room ready. Send this room code to the other player. Game is paused until they connect.';
+      net.status = 'Room ready. Send this exact 4 character code to the other player. Capital letters matter. Game is paused until they connect.';
       resetGame();
       renderNetwork();
     });
@@ -1863,7 +2185,20 @@
       net.conn = conn;
       setupPeerConnection(conn);
     });
-    net.peer.on('error', err => setNetStatus('Network error: ' + (err?.message || err)));
+    net.peer.on('disconnected', () => {
+      net.connected = false;
+      net.status = 'Disconnected from PeerJS signaling. Existing game may not reconnect until you host again.';
+      if(state) state.status = net.status;
+      render();
+    });
+    net.peer.on('error', err => {
+      if(err?.type === 'unavailable-id' && attempt < 8){
+        try{ net.peer.destroy(); }catch(e){}
+        startHostPeer(attempt + 1);
+        return;
+      }
+      setNetStatus('Network error: ' + (err?.message || err));
+    });
     render();
   }
 
@@ -1871,6 +2206,7 @@
     if(!window.Peer){ setNetStatus('PeerJS did not load. Open the hosted site with internet access.'); return; }
     const code = el('joinCodeInput').value.trim();
     if(!code){ setNetStatus('Paste a room code first.'); return; }
+    if(!validRoomCode(code)){ setNetStatus('Room codes are exactly 4 letters or numbers. Capital letters matter.'); return; }
     cleanupNetwork(true);
     net.mode = 'joining';
     net.role = 'guest';
@@ -1878,7 +2214,7 @@
     net.remoteOwner = PLAYER;
     net.roomCode = code;
     net.connected = false;
-    net.status = `Trying to join room ${code}...`;
+    net.status = `Trying to join room ${code}... Codes are case-sensitive.`;
     net.peer = new Peer();
     net.joinTimer = setTimeout(()=>{
       if(!net.connected){
@@ -1907,6 +2243,8 @@
       }
       if(net.role === 'guest') net.mode = 'online';
       net.connected = true;
+      net.lastSeen = Date.now();
+      startNetHeartbeat();
       if(state) state.clockLastUpdate = Date.now();
       net.status = net.role === 'host' ? 'Opponent connected. Each player controls one side.' : 'Connected. Waiting for host board state.';
       if(net.role === 'guest') conn.send({type:'hello', name:'opponent'});
@@ -1915,14 +2253,16 @@
     });
     conn.on('data', msg => handleNetMessage(msg));
     conn.on('close', () => {
+      if(net.suppressCloseAlert) return;
       const wasJoining = net.mode === 'joining' || (net.role === 'guest' && !net.connected);
-      net.connected = false;
       if(wasJoining){
         failJoin('Could not join that room. Check the room code and make sure the host still has the page open.');
         return;
       }
-      net.status = 'Connection closed. You are still looking at the last board state.';
-      renderNetwork();
+      const message = net.role === 'host'
+        ? 'Opponent disconnected. Game paused. Host a new room or wait for a new connection.'
+        : 'Host disconnected. Game paused. Ask the host for a new code.';
+      notifyPeerDisconnected(message);
     });
     conn.on('error', err => {
       const message = 'Connection error: ' + (err?.message || err);
@@ -1933,10 +2273,27 @@
 
   function handleNetMessage(msg){
     if(!msg || typeof msg !== 'object') return;
+    net.lastSeen = Date.now();
+    if(msg.type === 'ping'){
+      try{ if(net.conn && net.conn.open) net.conn.send({type:'pong', t:Date.now()}); }catch(e){}
+      return;
+    }
+    if(msg.type === 'pong') return;
     if(msg.type === 'hello'){
       log('Opponent joined the room.');
       render();
       sendStateToPeer();
+      return;
+    }
+    if(msg.type === 'disconnect'){
+      const message = net.role === 'host'
+        ? 'Opponent disconnected. Game paused. Host a new room or wait for a new connection.'
+        : 'Host disconnected. Game paused. Ask the host for a new code.';
+      notifyPeerDisconnected(message);
+      return;
+    }
+    if(msg.type === 'sound'){
+      playSfx(msg.kind, false);
       return;
     }
     if(msg.type === 'reveal' && net.role === 'guest'){
@@ -2004,6 +2361,8 @@
     if(action === 'drawCard'){ drawCard(owner); return; }
     if(action === 'goldDice'){ goldDice(owner); return; }
     if(action === 'castle'){ buyCastlingRights(owner); return; }
+    if(action === 'castleKing'){ castleNow(owner, 'king', true); return; }
+    if(action === 'castleQueen'){ castleNow(owner, 'queen', true); return; }
     if(action === 'teleportMode'){ beginTeleport(owner); return; }
     if(action === 'resurrect'){ resurrect(owner); return; }
     if(action === 'goldBar'){ buyGoldBar(owner); return; }
@@ -2016,7 +2375,7 @@
     if(!net.roomCode || net.role !== 'host') return;
     const text = net.roomCode;
     if(navigator.clipboard?.writeText){
-      navigator.clipboard.writeText(text).then(()=>setNetStatus('Room code copied. Send that exact code to your friend.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
+      navigator.clipboard.writeText(text).then(()=>setNetStatus('4 character room code copied. Send that exact code to your friend. Capital letters matter.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
     } else {
       setNetStatus('Clipboard not available. Copy the room code shown above.');
     }
@@ -2025,7 +2384,11 @@
   function loadRoomFromUrl(){
     try{
       const code = new URL(window.location.href).searchParams.get('room');
-      if(code) el('joinCodeInput').value = code;
+      if(code){
+        el('joinCodeInput').value = code;
+        if(el('menuJoinCodeInput')) el('menuJoinCodeInput').value = code;
+        showMultiplayerMenu();
+      }
     }catch(e){}
   }
 
@@ -2039,6 +2402,8 @@
     el('drawCardBtn').addEventListener('click',()=>localAction('drawCard'));
     el('goldDiceBtn').addEventListener('click',()=>localAction('goldDice'));
     el('castleBtn').addEventListener('click',()=>localAction('castle'));
+    el('castleKingBtn').addEventListener('click',()=>localAction('castleKing'));
+    el('castleQueenBtn').addEventListener('click',()=>localAction('castleQueen'));
     el('teleportBtn').addEventListener('click',()=>localAction('teleportMode'));
     el('resurrectBtn').addEventListener('click',()=>localAction('resurrect'));
     el('goldBarBtn').addEventListener('click',()=>localAction('goldBar'));
@@ -2048,8 +2413,24 @@
     el('joinGameBtn').addEventListener('click',joinFriendGame);
     el('disconnectNetBtn').addEventListener('click',()=>cleanupNetwork(false));
     el('copyLinkBtn').addEventListener('click',copyInviteLink);
+    el('joinCodeInput').addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/[^A-Za-z0-9]/g,'').slice(0,4);
+    });
+    el('playOfflineBtn').addEventListener('click',startOfflineFromMenu);
+    el('playMultiplayerMenuBtn').addEventListener('click',showMultiplayerMenu);
+    el('menuBackBtn').addEventListener('click',showMainMenu);
+    el('menuHostBtn').addEventListener('click',hostFromMenu);
+    el('menuJoinBtn').addEventListener('click',joinFromMenu);
+    el('menuJoinCodeInput').addEventListener('input', e => {
+      e.target.value = e.target.value.replace(/[^A-Za-z0-9]/g,'').slice(0,4);
+      if(el('joinCodeInput')) el('joinCodeInput').value = e.target.value;
+    });
+    el('menuJoinCodeInput').addEventListener('keydown', e => {
+      if(e.key === 'Enter') joinFromMenu();
+    });
   }
 
+  window.addEventListener('beforeunload', sendDisconnectNotice);
   setupButtons();
   loadRoomFromUrl();
   if(clockInterval) clearInterval(clockInterval);
