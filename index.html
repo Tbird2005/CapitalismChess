@@ -722,10 +722,16 @@
     const p = state.pieces[id];
     if(!p || p.owner !== state.turn || p.owner !== owner || p.captured) return;
     const ps = state.players[owner];
-    if(ps.usedTurnAction && ps.doubleMovesRemaining <= 0) return;
+
+    // Selection must stay available for the whole turn.
+    // Even after the movement/action has been spent, players still need to
+    // click their own pieces so they can buy land under them or inspect tiles.
+    const canStillMove = !ps.usedTurnAction || ps.doubleMovesRemaining > 0;
     state.selected = id;
-    state.legalMoves = legalMovesForPiece(p);
-    state.status = `${symbols[p.owner][p.type]} selected on ${coord(p.r,p.c)}. ${state.legalMoves.length} legal move(s).`;
+    state.legalMoves = canStillMove ? legalMovesForPiece(p) : [];
+    state.status = canStillMove
+      ? `${symbols[p.owner][p.type]} selected on ${coord(p.r,p.c)}. ${state.legalMoves.length} legal move(s).`
+      : `${symbols[p.owner][p.type]} selected on ${coord(p.r,p.c)}. Your move action is already spent, but you can still buy land here if allowed.`;
     render();
   }
 
