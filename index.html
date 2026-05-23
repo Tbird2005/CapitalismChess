@@ -1443,8 +1443,13 @@
     renderPromo();
     renderTurnNotice();
     renderBoardSideInfo();
-    el('turnBanner').textContent = state.gameOver ? `${label(state.winner)} wins` : `${label(state.turn)}${shouldAutoAct(state.turn) ? ' AI' : ''} turn • Half-turn ${state.turnNumber}`;
-    el('hintText').textContent = state.pendingCardPlacement ? 'Card placement active. Click an open slot on your back rank.' : (state.mode === 'teleport' ? 'Teleport mode active. Click an empty square.' : (shouldAutoAct(state.turn) ? `${label(state.turn)} AI is thinking through economy and tactics.` : 'Click your piece. Buy land before passing. Other purchases use your turn action.'));
+    const waitingForOpponent = onlineWaitingForOpponent();
+    el('turnBanner').textContent = waitingForOpponent
+      ? 'Waiting for opponent • Game paused'
+      : (state.gameOver ? `${label(state.winner)} wins` : `${label(state.turn)}${shouldAutoAct(state.turn) ? ' AI' : ''} turn • Half-turn ${state.turnNumber}`);
+    el('hintText').textContent = waitingForOpponent
+      ? 'Online game is paused until a friend connects. No moves or clock time happen yet.'
+      : (state.pendingCardPlacement ? 'Card placement active. Click an open slot on your back rank.' : (state.mode === 'teleport' ? 'Teleport mode active. Click an empty square.' : (shouldAutoAct(state.turn) ? `${label(state.turn)} AI is thinking through economy and tactics.` : 'Click your piece. Buy land before passing. Other purchases use your turn action.')));
     el('autoPlayerBtn').textContent = `Player AI: ${state.autoPlayer ? 'ON' : 'OFF'}`;
     const banner = el('statusBanner');
     banner.textContent = state.status;
@@ -1462,6 +1467,11 @@
       const won = state.winner === local;
       n.className = 'turnNotice ' + (won ? 'yourTurn' : 'notYourTurn');
       n.textContent = won ? `YOU WON • ${viewText}` : `GAME OVER • ${label(state.winner)} WON`;
+      return;
+    }
+    if(onlineWaitingForOpponent()){
+      n.className = 'turnNotice watchTurn';
+      n.textContent = 'WAITING FOR OPPONENT • GAME PAUSED';
       return;
     }
     if(state.autoPlayer && local === PLAYER && net.mode !== 'online'){
@@ -1509,7 +1519,7 @@
   function getRemainingTime(owner){
     if(!state?.players?.[owner]) return START_CLOCK_MS;
     let ms = state.players[owner].timeMs ?? START_CLOCK_MS;
-    if(!state.gameOver && state.turn === owner && !shouldAutoAct(owner)){
+    if(!state.gameOver && state.turn === owner && !shouldAutoAct(owner) && !clockIsPausedForNetwork()){
       ms -= Date.now() - (state.clockLastUpdate || Date.now());
     }
     return Math.max(0, ms);
@@ -1520,6 +1530,10 @@
     const owner = state.turn;
     if(!state.players?.[owner]) return;
     const now = Date.now();
+    if(clockIsPausedForNetwork()){
+      state.clockLastUpdate = now;
+      return;
+    }
     const last = state.clockLastUpdate || now;
     if(!shouldAutoAct(owner)){
       state.players[owner].timeMs = Math.max(0, (state.players[owner].timeMs ?? START_CLOCK_MS) - (now - last));
@@ -1534,7 +1548,7 @@
 
   function tickClock(){
     if(!state) return;
-    if(!state.gameOver && !isOnlineGuest()){
+    if(!state.gameOver && !isOnlineGuest() && !clockIsPausedForNetwork()){
       const owner = state.turn;
       if(!shouldAutoAct(owner) && getRemainingTime(owner) <= 0){
         settleClock();
@@ -1665,7 +1679,8 @@
     const owner = effectiveLocalOwner();
     const ps = state.players[owner];
     const p = selectedOwnPiece(owner);
-    const localHumanTurn = state.turn === owner && !state.gameOver && !state.pendingPromotion && !state.pendingCardPlacement && !shouldAutoAct(owner);
+    const waitingForOpponent = onlineWaitingForOpponent();
+    const localHumanTurn = !waitingForOpponent && state.turn === owner && !state.gameOver && !state.pendingPromotion && !state.pendingCardPlacement && !shouldAutoAct(owner);
     const canAct = localHumanTurn && !ps.usedTurnAction && ps.doubleMovesRemaining <= 0;
     const landCost = p ? landPurchaseCostAt(p.r,p.c,owner) : Infinity;
     el('buyLandBtn').disabled = !(localHumanTurn && p && state.land[p.r][p.c] !== owner && ps.landPurchases < 2 && (ps.freeLand || voluntaryAffordable(owner,landCost)));
@@ -1681,7 +1696,7 @@
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
     const endBtn = el('endTurnBtn');
     endBtn.disabled = !localHumanTurn;
-    endBtn.textContent = localHumanTurn ? '✅ END TURN / PASS' : 'END TURN / PASS';
+    endBtn.textContent = waitingForOpponent ? 'WAITING FOR OPPONENT' : (localHumanTurn ? '✅ END TURN / PASS' : 'END TURN / PASS');
     el('autoPlayerBtn').disabled = net.mode === 'online';
     const resetBtn = el('resetBtn');
     resetBtn.disabled = isOnlineGuest() || net.mode === 'joining';
@@ -1766,12 +1781,20 @@
   }
 
 
+  function isOnlineHost(){ return net.mode === 'online' && net.role === 'host'; }
+  function isOnlineGuest(){ return net.mode === 'online' && net.role === 'guest'; }
+
+  function onlineWaitingForOpponent(){
+    return (net.mode === 'online' && net.role === 'host' && !net.connected) || net.mode === 'joining';
+  }
+
+  function clockIsPausedForNetwork(){
+    return onlineWaitingForOpponent();
+  }
+
   function effectiveLocalOwner(){
     return net.mode === 'online' ? net.localOwner : PLAYER;
   }
-
-  function isOnlineHost(){ return net.mode === 'online' && net.role === 'host'; }
-  function isOnlineGuest(){ return net.mode === 'online' && net.role === 'guest'; }
 
   function renderNetwork(){
     const statusEl = el('netStatus');
@@ -1828,7 +1851,7 @@
     net.peer = new Peer();
     net.peer.on('open', id => {
       net.roomCode = id;
-      net.status = 'Room ready. Send this room code to the other player.';
+      net.status = 'Room ready. Send this room code to the other player. Game is paused until they connect.';
       resetGame();
       renderNetwork();
     });
@@ -1884,6 +1907,7 @@
       }
       if(net.role === 'guest') net.mode = 'online';
       net.connected = true;
+      if(state) state.clockLastUpdate = Date.now();
       net.status = net.role === 'host' ? 'Opponent connected. Each player controls one side.' : 'Connected. Waiting for host board state.';
       if(net.role === 'guest') conn.send({type:'hello', name:'opponent'});
       if(net.role === 'host') sendStateToPeer();
@@ -1956,6 +1980,12 @@
         return;
       }
       sendActionToHost(action, payload);
+      return;
+    }
+    if(isOnlineHost() && !net.connected && action !== 'reset'){
+      setNetStatus('Waiting for opponent to connect. The game is paused and moves are locked until then.');
+      if(state) state.status = 'Waiting for opponent to connect. No moves or clock time happen yet.';
+      render();
       return;
     }
     runActionForOwner(action, payload, effectiveLocalOwner());
