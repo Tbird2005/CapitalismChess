@@ -167,6 +167,9 @@
   .sq.capture::after{width:74%;height:74%;background:transparent;border:4px solid rgba(255,80,80,.82)}
   .sq.placeSlot{outline:4px solid var(--gold);outline-offset:-4px;filter:brightness(1.15)}
   .sq.placeSlot::after{content:"+";position:absolute;z-index:8;width:42%;height:42%;border-radius:12px;background:rgba(0,0,0,.62);color:var(--gold);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:1000;border:2px solid rgba(255,255,255,.7)}
+  .sq.teleportTarget{outline:4px solid #b875ff;outline-offset:-5px;filter:brightness(1.18);animation:teleportPulse 1s infinite;z-index:4}
+  .sq.teleportTarget::before{content:"TELEPORT";position:absolute;z-index:8;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:999px;background:rgba(30,0,55,.78);color:#f4dcff;border:2px solid rgba(255,255,255,.75);padding:4px 7px;font-size:clamp(8px,1.25vw,13px);font-weight:1000;letter-spacing:.5px;pointer-events:none}
+  @keyframes teleportPulse{0%,100%{box-shadow:inset 0 0 0 0 rgba(184,117,255,.1)}50%{box-shadow:inset 0 0 28px 7px rgba(184,117,255,.48)}}
   .coord{position:absolute;bottom:3px;right:5px;font-size:10px;font-weight:900;opacity:.42;color:#111;z-index:9}
   .piece{position:relative;z-index:7;line-height:1;transform:translateY(-2px);text-shadow:0 2px 3px rgba(0,0,0,.82);-webkit-text-stroke:1px rgba(0,0,0,.68)}
   .piece.gold{color:#ff9f24;text-shadow:0 2px 3px rgba(0,0,0,.86)}
@@ -212,6 +215,7 @@
   button.primary{background:linear-gradient(180deg,#315b3f,#1f3f2c);border-color:#3a6c4b}
   button.warn{background:linear-gradient(180deg,#694526,#3d291a);border-color:#7d5a30}
   button.danger{background:linear-gradient(180deg,#703144,#41212b);border-color:#83364f}
+  button.teleportActive{background:linear-gradient(180deg,#7e3bd6,#4a1e87)!important;border-color:#e4c5ff!important;box-shadow:0 0 0 2px rgba(184,117,255,.22),0 0 20px rgba(184,117,255,.28)}
   button.full{grid-column:1/-1}
   button.castleNow{background:linear-gradient(180deg,#55417a,#342a4f);border-color:#8364c7;color:#f5efff}
   button.castleNow:not(:disabled){box-shadow:0 0 14px rgba(131,100,199,.28)}
@@ -226,6 +230,7 @@
   .rules{font-size:12px;color:var(--muted);line-height:1.35}.rules strong{color:var(--text)}
   .banner{border:1px solid var(--line);background:#111723;border-radius:14px;padding:10px;line-height:1.3;color:var(--muted);font-size:12px}
   .banner.win{border-color:#4c9462;background:rgba(55,110,67,.2);color:#d9ffe0}.banner.lose{border-color:#9c4b5c;background:rgba(110,55,70,.23);color:#ffe2e7}
+  .banner.teleport{border-color:#b875ff;background:linear-gradient(180deg,#3e1f63,#171125);color:#f4dcff;box-shadow:0 0 0 2px rgba(184,117,255,.18),0 0 28px rgba(184,117,255,.28)}
   .promoBox{position:fixed;inset:0;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
   .promoPanel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;max-width:430px;width:100%;box-shadow:0 20px 80px rgba(0,0,0,.55)}
   .promoPanel h2{margin:0 0 8px}.promoChoices{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}.promoChoices button{font-size:28px;min-height:58px}
@@ -1285,19 +1290,49 @@
     return true;
   }
 
-  function beginTeleport(owner=effectiveLocalOwner()){
-    const ps = state.players[owner];
-    if(ps.usedTurnAction || ps.doubleMovesRemaining || !hasKing(owner) || !voluntaryAffordable(owner,10)) return;
-    state.mode = 'teleport';
-    state.modeOwner = owner;
+  function cancelTeleport(owner=effectiveLocalOwner()){
+    if(state.mode !== 'teleport' || state.modeOwner !== owner) return false;
+    state.mode = null;
+    state.modeOwner = null;
     state.selected = null;
     state.legalMoves = [];
-    state.status = 'Teleport mode: click any empty square. Cost is 10 gold and this uses your turn action.';
+    state.status = 'King teleport cancelled. You can still choose another action.';
+    render();
+    return true;
+  }
+
+  function beginTeleport(owner=effectiveLocalOwner()){
+    if(state.mode === 'teleport' && state.modeOwner === owner){
+      cancelTeleport(owner);
+      return;
+    }
+    const ps = state.players[owner];
+    if(ps.usedTurnAction || ps.doubleMovesRemaining){
+      state.status = 'King Teleport must be chosen before using another turn action.';
+      render();
+      return;
+    }
+    if(!hasKing(owner)){
+      state.status = 'King Teleport needs a living king.';
+      render();
+      return;
+    }
+    if(!voluntaryAffordable(owner,10)){
+      state.status = 'King Teleport costs 10 gold.';
+      render();
+      return;
+    }
+    const king = livingPieces(owner).find(p => p.type === 'K');
+    state.mode = 'teleport';
+    state.modeOwner = owner;
+    state.selected = king ? king.id : null;
+    state.legalMoves = [];
+    state.status = 'TELEPORT ACTIVE: click any purple highlighted empty square to move your king. Click King Teleport again to cancel.';
     render();
   }
 
   function teleportOwnerTo(owner,r,c){
-    if(!inBounds(r,c) || state.board[r][c]){ state.status = 'Teleport needs an empty square.'; render(); return; }
+    if(!inBounds(r,c) || state.board[r][c]){ state.status = 'Teleport needs an empty square. Click a purple highlighted tile, or click King Teleport again to cancel.'; render(); return; }
     const king = livingPieces(owner).find(p => p.type === 'K');
     if(!king) return;
     if(!teleportKing(owner, king.id, r, c)) return;
@@ -1631,13 +1666,19 @@
     el('turnBanner').textContent = waitingForOpponent
       ? 'Waiting for opponent • Game paused'
       : (state.gameOver ? `${label(state.winner)} wins` : `${label(state.turn)}${shouldAutoAct(state.turn) ? ' AI' : ''} turn • Half-turn ${state.turnNumber}`);
+    const teleportForLocal = state.mode === 'teleport' && state.modeOwner === effectiveLocalOwner();
     el('hintText').textContent = waitingForOpponent
       ? 'Online game is paused until a friend connects. No moves or clock time happen yet.'
-      : (state.pendingCardPlacement ? 'Card placement active. Click an open slot on your back rank.' : (state.mode === 'teleport' ? 'Teleport mode active. Click an empty square.' : (shouldAutoAct(state.turn) ? `${label(state.turn)} AI is thinking through economy and tactics.` : 'Click your piece. Buy land before passing. Other purchases use your turn action.')));
+      : (state.pendingCardPlacement
+        ? 'Card placement active. Click an open slot on your back rank.'
+        : (state.mode === 'teleport'
+          ? (teleportForLocal ? 'TELEPORT ACTIVE: click a purple empty square. Click King Teleport again to cancel.' : `${label(state.modeOwner)} is choosing a teleport square.`)
+          : (shouldAutoAct(state.turn) ? `${label(state.turn)} AI is thinking through economy and tactics.` : 'Click your piece. Buy land before passing. Other purchases use your turn action.')));
     el('autoPlayerBtn').textContent = `Player AI: ${state.autoPlayer ? 'ON' : 'OFF'}`;
     const banner = el('statusBanner');
     banner.textContent = state.status;
-    banner.className = 'banner' + (state.gameOver ? (state.winner === effectiveLocalOwner() ? ' win' : ' lose') : '');
+    const teleportBanner = state.mode === 'teleport' && state.modeOwner === effectiveLocalOwner();
+    banner.className = 'banner' + (state.gameOver ? (state.winner === effectiveLocalOwner() ? ' win' : ' lose') : (teleportBanner ? ' teleport' : ''));
   }
 
   function renderTurnNotice(){
@@ -1814,7 +1855,11 @@
         if(state.pendingCardPlacement && state.pendingCardPlacement.owner === localOwner && r === backRankRow(localOwner) && !state.board[r][c]){
           sq.classList.add('placeSlot');
         }
-        sq.title = tileHoverText(r,c);
+        const teleportTarget = state.mode === 'teleport' && state.modeOwner === localOwner && state.turn === localOwner && !state.gameOver && !onlineWaitingForOpponent() && !state.board[r][c];
+        if(teleportTarget) sq.classList.add('teleportTarget');
+        let squareTitle = tileHoverText(r,c);
+        if(teleportTarget) squareTitle += '\nTELEPORT TARGET: click here to teleport your king for 10g.';
+        sq.title = squareTitle;
         if(state.genChip[r][c]){
           const chip = document.createElement('div'); chip.className = `chip ownershipChip ${sideOf(state.genChip[r][c])}`; sq.appendChild(chip);
         }
@@ -1879,7 +1924,7 @@
     el('castleBtn').textContent = ps.castlingUsed ? 'Castling Used' : (ps.castlingRightsTurn != null ? 'Castling Rights Owned' : 'Buy Castling Rights (3g)');
     el('castleKingBtn').textContent = 'Castle Kingside (owned)';
     el('castleQueenBtn').textContent = 'Castle Queenside (owned)';
-    el('teleportBtn').textContent = 'King Teleport (10g)';
+    el('teleportBtn').textContent = state.mode === 'teleport' && state.modeOwner === owner ? '✖ Cancel King Teleport' : 'King Teleport (10g)';
     el('resurrectBtn').textContent = 'Resurrect Last Capture (8g)';
     el('goldBarBtn').textContent = `Buy Gold Bar (100g)`;
   }
@@ -1912,7 +1957,12 @@
     el('castleQueenBtn').disabled = !canCastleQ;
     el('castleKingBtn').title = canCastleK ? 'Castle kingside now. Both king and rook resolve landing effects.' : castleInfo(owner,'king').reason;
     el('castleQueenBtn').title = canCastleQ ? 'Castle queenside now. Both king and rook resolve landing effects.' : castleInfo(owner,'queen').reason;
-    el('teleportBtn').disabled = !(canAct && hasKing(owner) && voluntaryAffordable(owner,10));
+    const teleportActive = state.mode === 'teleport' && state.modeOwner === owner;
+    const teleportBtn = el('teleportBtn');
+    teleportBtn.disabled = !(localHumanTurn && (teleportActive || (canAct && hasKing(owner) && voluntaryAffordable(owner,10))));
+    teleportBtn.textContent = teleportActive ? '✖ Cancel King Teleport' : 'King Teleport (10g)';
+    teleportBtn.classList.toggle('teleportActive', teleportActive);
+    teleportBtn.title = teleportActive ? 'Teleport targeting is active. Click a purple empty square, or click here to cancel.' : 'Spend 10 gold to teleport your king to any empty square. This uses your turn action after you choose the square.';
     el('resurrectBtn').disabled = !(canAct && canResurrect(owner));
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
     const endBtn = el('endTurnBtn');
