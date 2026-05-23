@@ -35,42 +35,72 @@
     color:var(--text);
   }
   header{
-    padding:18px 22px 10px;
+    padding:10px 14px 7px;
     display:flex;
     justify-content:space-between;
-    align-items:flex-start;
-    gap:16px;
+    align-items:center;
+    gap:10px;
     flex-wrap:wrap;
   }
-  h1{margin:0;font-size:28px;letter-spacing:.3px}
-  .subtitle{color:var(--muted);margin-top:4px;font-size:14px;max-width:760px;line-height:1.35}
-  .pillrow{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-  .pill{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:8px 12px;color:var(--muted);font-weight:700;font-size:13px}
+  h1{margin:0;font-size:22px;letter-spacing:.3px}
+  .subtitle{color:var(--muted);margin-top:2px;font-size:12px;max-width:680px;line-height:1.25}
+  .pillrow{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  .pill{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:6px 9px;color:var(--muted);font-weight:700;font-size:11px}
   .pill strong{color:var(--text)}
   main{
+    display:grid;
+    grid-template-columns:minmax(250px,320px) auto minmax(250px,320px);
+    grid-template-areas:"left board right";
+    gap:12px;
+    padding:6px 14px 12px;
+    align-items:start;
+    justify-content:center;
+    width:100%;
+  }
+  .leftRail,.rightRail{
     display:flex;
     flex-direction:column;
-    gap:18px;
-    padding:12px 22px 22px;
-    align-items:center;
+    gap:10px;
+    max-height:calc(100vh - 72px);
+    overflow:auto;
+    padding-right:2px;
   }
-  @media(max-width:1040px){main{padding:10px}.board{max-width:92vw}}
+  .leftRail{grid-area:left}
+  .rightRail{grid-area:right}
+  .leftRail::-webkit-scrollbar,.rightRail::-webkit-scrollbar,.log::-webkit-scrollbar{width:8px}
+  .leftRail::-webkit-scrollbar-thumb,.rightRail::-webkit-scrollbar-thumb,.log::-webkit-scrollbar-thumb{background:#333c50;border-radius:999px}
   .boardWrap{
-    width:min(96vw,720px);
+    grid-area:board;
+    width:min(56vw, calc(100vh - 220px), 720px);
+    min-width:520px;
     background:rgba(23,27,36,.9);
     border:1px solid var(--line);
     border-radius:18px;
-    padding:14px;
+    padding:10px;
     box-shadow:0 20px 60px rgba(0,0,0,.35);
+    justify-self:center;
   }
-  .boardTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:12px;flex-wrap:wrap}
-  .turnBanner{font-weight:900;font-size:18px}
+  @media(max-width:1250px){
+    main{grid-template-columns:minmax(210px,250px) auto minmax(210px,250px);gap:8px;padding:5px 8px 10px}
+    .boardWrap{width:min(50vw, calc(100vh - 210px), 620px);min-width:400px;padding:8px}
+    .panel{padding:10px}
+    button{font-size:12px;padding:8px 7px;min-height:36px}
+    .subtitle{max-width:560px}
+  }
+  @media(max-width:900px){
+    header{padding:10px}
+    main{display:flex;flex-direction:column;align-items:center;padding:8px;gap:10px}
+    .boardWrap,.leftRail,.rightRail{width:min(96vw,720px);min-width:0;max-height:none;overflow:visible}
+    .board{max-width:92vw}
+  }
+  .boardTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap}
+  .turnBanner{font-weight:900;font-size:16px}
   .turnNotice{
-    margin:10px 0 12px;
-    border-radius:16px;
-    padding:12px 14px;
+    margin:6px 0 8px;
+    border-radius:14px;
+    padding:8px 10px;
     text-align:center;
-    font-size:clamp(18px,3vw,28px);
+    font-size:clamp(16px,2.4vw,24px);
     font-weight:1000;
     letter-spacing:.8px;
     border:2px solid var(--line);
@@ -93,9 +123,9 @@
     border-color:#6fcfff;
     background:linear-gradient(180deg,#23455f,#172230);
   }
-  .hint{color:var(--muted);font-size:13px;line-height:1.35}
+  .hint{color:var(--muted);font-size:12px;line-height:1.25}
   .board{
-    width:min(72vw,680px);
+    width:100%;
     aspect-ratio:1;
     display:grid;
     grid-template-columns:repeat(8,1fr);
@@ -145,14 +175,14 @@
   .xxGenChip{width:56%;height:56%;z-index:4;border:2px solid rgba(225,255,225,.9);background-image:linear-gradient(rgba(0,255,35,.48),rgba(0,210,30,.48)),url('https://file.garden/ZtDesvPK_QLwMx9K/HTML/txt/coin.png');background-blend-mode:color,normal;box-shadow:0 0 14px rgba(35,255,55,.9), inset 0 0 12px rgba(0,90,0,.45)}
   .paidBadge{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:8;background:rgba(0,0,0,.7);color:var(--gold);font-size:11px;font-weight:900;border-radius:999px;padding:3px 6px;border:1px solid rgba(255,255,255,.35);pointer-events:none}
   .side{display:flex;flex-direction:column;gap:14px;width:min(96vw,720px)}
-  .panel{background:rgba(23,27,36,.92);border:1px solid var(--line);border-radius:18px;padding:14px;box-shadow:0 18px 50px rgba(0,0,0,.28)}
+  .panel{background:rgba(23,27,36,.92);border:1px solid var(--line);border-radius:16px;padding:12px;box-shadow:0 18px 50px rgba(0,0,0,.28)}
   .scoreGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .scoreCard{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:12px}
+  .scoreCard{background:var(--panel2);border:1px solid var(--line);border-radius:14px;padding:10px}
   .scoreName{display:flex;align-items:center;gap:8px;font-weight:900;margin-bottom:8px}
   .dot{width:12px;height:12px;border-radius:50%;display:inline-block}.dot.gold{background:var(--goldSide)}.dot.diamond{background:var(--diamond)}.dot.player{background:var(--player)}.dot.ai{background:var(--ai)}
-  .gold{font-size:26px;color:var(--gold);font-weight:1000}.smallStats{font-size:12px;color:var(--muted);line-height:1.55;margin-top:6px}
+  .gold{font-size:22px;color:var(--gold);font-weight:1000}.smallStats{font-size:11px;color:var(--muted);line-height:1.4;margin-top:5px}
   .controls{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  .onlineGrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+  .onlineGrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}
   .onlineGrid button{min-height:38px;padding:8px}
   .onlineInput{width:100%;border:1px solid var(--line);background:#0d1017;color:var(--text);border-radius:12px;padding:10px;font-weight:800;outline:none}
   .onlineInput:focus{border-color:#6fcfff;box-shadow:0 0 0 2px rgba(111,207,255,.15)}
@@ -174,10 +204,10 @@
   button.warn{background:linear-gradient(180deg,#694526,#3d291a);border-color:#7d5a30}
   button.danger{background:linear-gradient(180deg,#703144,#41212b);border-color:#83364f}
   button.full{grid-column:1/-1}
-  .log{height:220px;overflow:auto;background:#0d1017;border:1px solid var(--line);border-radius:12px;padding:9px;font-family:ui-monospace,Consolas,monospace;font-size:12px;line-height:1.45;color:#d9e2f2}
+  .log{height:clamp(120px,22vh,190px);overflow:auto;background:#0d1017;border:1px solid var(--line);border-radius:12px;padding:9px;font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.35;color:#d9e2f2}
   .log div{margin-bottom:5px;border-bottom:1px solid rgba(255,255,255,.05);padding-bottom:4px}.log b{color:var(--gold)}
-  .rules{font-size:13px;color:var(--muted);line-height:1.45}.rules strong{color:var(--text)}
-  .banner{border:1px solid var(--line);background:#111723;border-radius:14px;padding:12px;line-height:1.35;color:var(--muted)}
+  .rules{font-size:12px;color:var(--muted);line-height:1.35}.rules strong{color:var(--text)}
+  .banner{border:1px solid var(--line);background:#111723;border-radius:14px;padding:10px;line-height:1.3;color:var(--muted);font-size:12px}
   .banner.win{border-color:#4c9462;background:rgba(55,110,67,.2);color:#d9ffe0}.banner.lose{border-color:#9c4b5c;background:rgba(110,55,70,.23);color:#ffe2e7}
   .promoBox{position:fixed;inset:0;background:rgba(0,0,0,.62);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
   .promoPanel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:18px;max-width:430px;width:100%;box-shadow:0 20px 80px rgba(0,0,0,.55)}
@@ -204,22 +234,7 @@
   </div>
 </header>
 <main>
-  <section class="boardWrap">
-    <div class="boardTop">
-      <div>
-        <div class="turnBanner" id="turnBanner">Player turn</div>
-        <div class="hint" id="hintText">Click one of your pieces. Legal moves will highlight. Buy land before or after moving.</div>
-      </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="warn" id="autoPlayerBtn">Player AI: OFF</button>
-        <button class="danger" id="resetBtn">Reset Game</button>
-      </div>
-    </div>
-    <div class="turnNotice watchTurn" id="turnNotice">TURN STATUS</div>
-    <div class="board" id="board"></div>
-  </section>
-
-  <aside class="side">
+  <aside class="leftRail">
     <section class="panel">
       <div class="rules"><strong>Online Friend Game:</strong> Host makes a room. Friend joins with the room code. Host browser is authoritative so both boards stay synced.</div>
       <div class="onlineGrid">
@@ -227,7 +242,7 @@
         <button id="disconnectNetBtn" class="danger">Disconnect</button>
         <input id="joinCodeInput" class="onlineInput" placeholder="Room code" />
         <button id="joinGameBtn" class="warn">Join Friend Game</button>
-        <button id="copyLinkBtn" class="full">Copy Invite Link</button>
+        <button id="copyLinkBtn" class="full">Copy Room Code</button>
       </div>
       <div class="roomCodeBox" id="roomCodeBox">Room code: none</div>
       <div class="netStatus" id="netStatus">Offline local mode. Use this as normal single player or AI vs AI.</div>
@@ -243,6 +258,29 @@
     </section>
 
     <section class="panel">
+      <div class="rules">
+        <strong>Chips:</strong> biggest to smallest: generator ownership, land tile, original generator coin, then green XX generator. Hover a tile to see every chip on it.
+      </div>
+    </section>
+  </aside>
+
+  <section class="boardWrap">
+    <div class="boardTop">
+      <div>
+        <div class="turnBanner" id="turnBanner">Player turn</div>
+        <div class="hint" id="hintText">Click one of your pieces. Legal moves highlight. Buy land before or after moving.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="warn" id="autoPlayerBtn">Player AI: OFF</button>
+        <button class="danger" id="resetBtn">Reset Game</button>
+      </div>
+    </div>
+    <div class="turnNotice watchTurn" id="turnNotice">TURN STATUS</div>
+    <div class="board" id="board"></div>
+  </section>
+
+  <aside class="rightRail">
+    <section class="panel">
       <div class="controls">
         <button id="buyLandBtn" class="primary">Buy Land</button>
         <button id="buyGenBtn" class="primary">Buy Gen Chip</button>
@@ -255,12 +293,6 @@
         <button id="resurrectBtn">Resurrect</button>
         <button id="goldBarBtn" class="primary">Buy Gold Bar</button>
         <button id="endTurnBtn" class="full">End Turn / Pass</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="rules">
-        <strong>Quick map:</strong> Gold and Diamond are randomized each reset. Gold always moves first. Chips stack from biggest to smallest: generator ownership, land tile, original generator coin, then green XX generator. Hover a tile to see every chip on it. Draw Piece Card costs 5 gold and places a random piece on an open back-rank slot.
       </div>
     </section>
 
@@ -297,9 +329,13 @@
   const AI = 'ai';
   const BANK = 'bank';
   const pieceValues = {P:1,N:3,B:3,R:5,Q:9,K:12};
+  // Both sides use the same filled chess glyphs.
+  // Color comes from the side CSS class, so Gold and Diamond stay visually distinct
+  // without one side using the hollow/outline Unicode set.
+  const filledChessSymbols = {K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
   const symbols = {
-    player:{K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙'},
-    ai:{K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'}
+    player: filledChessSymbols,
+    ai: filledChessSymbols
   };
   const files = ['a','b','c','d','e','f','g','h'];
 
@@ -328,7 +364,8 @@
     connected:false,
     localOwner:PLAYER,
     remoteOwner:AI,
-    status:'Offline local mode. Use this as normal single player or AI vs AI.'
+    status:'Offline local mode. Use this as normal single player or AI vs AI.',
+    joinTimer:null
   };
 
   const el = id => document.getElementById(id);
@@ -1522,6 +1559,10 @@
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
     el('endTurnBtn').disabled = !localHumanTurn;
     el('autoPlayerBtn').disabled = net.mode === 'online';
+    const resetBtn = el('resetBtn');
+    resetBtn.disabled = isOnlineGuest() || net.mode === 'joining';
+    resetBtn.textContent = isOnlineGuest() ? 'Reset: Host Only' : (net.mode === 'joining' ? 'Joining...' : 'Reset Game');
+    resetBtn.title = isOnlineGuest() ? 'Only the host can reset an online game.' : 'Reset the game.';
     renderNetwork();
   }
 
@@ -1614,11 +1655,12 @@
     const codeText = net.roomCode ? net.roomCode : 'none';
     el('roomCodeBox').textContent = `Room code: ${codeText}`;
     statusEl.textContent = net.status;
-    el('copyLinkBtn').disabled = !net.roomCode;
-    el('disconnectNetBtn').disabled = net.mode !== 'online';
-    el('hostGameBtn').disabled = net.mode === 'online';
-    el('joinGameBtn').disabled = net.mode === 'online';
-    el('joinCodeInput').disabled = net.mode === 'online';
+    const onlineish = net.mode !== 'local';
+    el('copyLinkBtn').disabled = !net.roomCode || net.role !== 'host';
+    el('disconnectNetBtn').disabled = !onlineish;
+    el('hostGameBtn').disabled = onlineish;
+    el('joinGameBtn').disabled = onlineish;
+    el('joinCodeInput').disabled = onlineish;
   }
 
   function setNetStatus(text){
@@ -1627,6 +1669,10 @@
   }
 
   function cleanupNetwork(keepStatus=false){
+    if(net.joinTimer){
+      clearTimeout(net.joinTimer);
+      net.joinTimer = null;
+    }
     try{ if(net.conn) net.conn.close(); }catch(e){}
     try{ if(net.peer) net.peer.destroy(); }catch(e){}
     net.mode = 'local';
@@ -1638,6 +1684,12 @@
     net.localOwner = PLAYER;
     net.remoteOwner = AI;
     if(!keepStatus) net.status = 'Offline local mode. Use this as normal single player or AI vs AI.';
+    render();
+  }
+
+  function failJoin(message){
+    cleanupNetwork(true);
+    net.status = message;
     render();
   }
 
@@ -1673,24 +1725,40 @@
     const code = el('joinCodeInput').value.trim();
     if(!code){ setNetStatus('Paste a room code first.'); return; }
     cleanupNetwork(true);
-    net.mode = 'online';
+    net.mode = 'joining';
     net.role = 'guest';
     net.localOwner = AI;
     net.remoteOwner = PLAYER;
     net.roomCode = code;
-    net.status = 'Joining room...';
+    net.connected = false;
+    net.status = `Trying to join room ${code}...`;
     net.peer = new Peer();
+    net.joinTimer = setTimeout(()=>{
+      if(!net.connected){
+        failJoin('Could not join that room. Check the room code and make sure the host still has the page open.');
+      }
+    }, 9000);
     net.peer.on('open', () => {
       const conn = net.peer.connect(code, {reliable:true});
       net.conn = conn;
       setupPeerConnection(conn);
     });
-    net.peer.on('error', err => setNetStatus('Network error: ' + (err?.message || err)));
+    net.peer.on('error', err => {
+      const msg = err?.type === 'peer-unavailable'
+        ? 'Invalid room code or host is not online. Ask the host for the current room code.'
+        : 'Network error while joining: ' + (err?.message || err);
+      failJoin(msg);
+    });
     render();
   }
 
   function setupPeerConnection(conn){
     conn.on('open', () => {
+      if(net.joinTimer){
+        clearTimeout(net.joinTimer);
+        net.joinTimer = null;
+      }
+      if(net.role === 'guest') net.mode = 'online';
       net.connected = true;
       net.status = net.role === 'host' ? 'Friend connected. Host controls one side. Friend controls the other.' : 'Connected. Waiting for host board state.';
       if(net.role === 'guest') conn.send({type:'hello', name:'friend'});
@@ -1699,11 +1767,20 @@
     });
     conn.on('data', msg => handleNetMessage(msg));
     conn.on('close', () => {
+      const wasJoining = net.mode === 'joining' || (net.role === 'guest' && !net.connected);
       net.connected = false;
+      if(wasJoining){
+        failJoin('Could not join that room. Check the room code and make sure the host still has the page open.');
+        return;
+      }
       net.status = 'Connection closed. You are still looking at the last board state.';
       renderNetwork();
     });
-    conn.on('error', err => setNetStatus('Connection error: ' + (err?.message || err)));
+    conn.on('error', err => {
+      const message = 'Connection error: ' + (err?.message || err);
+      if(net.mode === 'joining' || (net.role === 'guest' && !net.connected)) failJoin(message);
+      else setNetStatus(message);
+    });
   }
 
   function handleNetMessage(msg){
@@ -1744,6 +1821,10 @@
 
   function localAction(action, payload={}){
     if(isOnlineGuest()){
+      if(action === 'reset'){
+        setNetStatus('Only the host can reset an online game.');
+        return;
+      }
       sendActionToHost(action, payload);
       return;
     }
@@ -1771,12 +1852,10 @@
   }
 
   function copyInviteLink(){
-    if(!net.roomCode) return;
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', net.roomCode);
-    const text = url.toString();
+    if(!net.roomCode || net.role !== 'host') return;
+    const text = net.roomCode;
     if(navigator.clipboard?.writeText){
-      navigator.clipboard.writeText(text).then(()=>setNetStatus('Invite link copied. Send it to your friend.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
+      navigator.clipboard.writeText(text).then(()=>setNetStatus('Room code copied. Send that exact code to your friend.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
     } else {
       setNetStatus('Clipboard not available. Copy the room code shown above.');
     }
