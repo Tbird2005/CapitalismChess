@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v39</div>
+    <div class="versionBadge">Version v40</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -347,7 +347,7 @@
       <button id="menuJoinBtn" class="bigWarn">Join With Code</button>
       <button id="menuBackBtn">Back</button>
     </div>
-    <div class="menuSmall" id="menuNetStatus">Use the room code shown after hosting. Do not use the website URL as the room code. If a friend on another network cannot connect, v39 includes TURN relay fallback.</div>
+    <div class="menuSmall" id="menuNetStatus">Use the room code shown after hosting. Do not use the website URL as the room code. v40 forces TURN relay mode for multiplayer. This is slower but should connect through more VPNs and strict routers.</div>
   </div>
 </div>
 
@@ -532,7 +532,8 @@
           {urls:'turn:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject'},
           {urls:'turns:openrelay.metered.ca:443?transport=tcp', username:'openrelayproject', credential:'openrelayproject'}
         ],
-        iceCandidatePoolSize: 10
+        iceCandidatePoolSize: 10,
+        iceTransportPolicy: 'relay'
       }
     };
   }
@@ -3540,7 +3541,7 @@
   function peerFailureMessage(err){
     const raw = String(err?.message || err || 'connection failed');
     if(isIceOrNegotiationError(err)){
-      return 'Connection reached the host code but WebRTC could not make a path between both browsers. v39 now tries TURN relay fallback. If it still fails, both players should try Chrome or Edge, turn off VPN, or have one player use a phone hotspot. Original error: ' + raw;
+      return 'Connection reached the host code but the public TURN relay still could not carry the WebRTC connection. A single-file static website cannot guarantee every VPN, firewall, or browser network policy. For guaranteed multiplayer we need a real relay backend like Firebase/Supabase/WebSocket server. Original error: ' + raw;
     }
     return 'Network connection failed: ' + raw;
   }
