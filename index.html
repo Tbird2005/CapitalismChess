@@ -998,7 +998,7 @@
       if(ps.doubleMovesRemaining > 0){
         state.selected = null;
         state.legalMoves = [];
-        state.status = `${label(owner)} has ${ps.doubleMovesRemaining} double move action left.`;
+        state.status = `${label(owner)} has ${ps.doubleMovesRemaining} double action left.`;
         render();
         return;
       }
@@ -1119,19 +1119,43 @@
     return true;
   }
 
-  function buyGeneratorChip(owner=PLAYER, pieceId=state.selected){
+  function hasActionSlot(owner){
+    const ps = state.players[owner];
+    return !!ps && (!ps.usedTurnAction || ps.doubleMovesRemaining > 0);
+  }
+
+  function finishTurnAction(owner, isHuman=false, selectedPieceId=null, message='Action complete.'){
+    const ps = state.players[owner];
+    if(ps.doubleMovesRemaining > 0){
+      ps.doubleMovesRemaining--;
+      if(ps.doubleMovesRemaining > 0){
+        state.selected = selectedPieceId;
+        state.legalMoves = [];
+        state.status = `${label(owner)} has ${ps.doubleMovesRemaining} double action left.`;
+        render();
+        return;
+      }
+    }
+    ps.usedTurnAction = true;
+    state.selected = selectedPieceId;
+    state.legalMoves = [];
+    state.status = message;
+    if(isHuman) render();
+  }
+
+  function buyGeneratorChip(owner=PLAYER, pieceId=state.selected, isHuman=false){
     const ps = state.players[owner];
     const p = state.pieces[pieceId];
-    if(!p || p.owner !== owner || p.captured || ps.usedTurnAction || ps.doubleMovesRemaining) return false;
+    if(!p || p.owner !== owner || p.captured || !hasActionSlot(owner)) return false;
     if(!isDefaultGen(p.r,p.c)) return false;
     const current = state.genChip[p.r][p.c];
     if(current === owner) return false;
     if(ps.freeGenChip){
       ps.freeGenChip = false;
       state.genChip[p.r][p.c] = owner;
-      ps.usedTurnAction = true;
       log(`${label(owner)} used a free generator chip on ${coord(p.r,p.c)}.`);
       purchaseSfx();
+      finishTurnAction(owner, isHuman, p.id, `${label(owner)} placed a generator chip. You may buy land, then end turn.`);
       return true;
     }
     const cost = current ? 8 : 5;
@@ -1139,23 +1163,23 @@
     if(current){ if(!transferGold(owner,current,cost,`to buy enemy generator chip at ${coord(p.r,p.c)}`)) return false; }
     else { if(!transferGold(owner,BANK,cost,`to buy generator chip at ${coord(p.r,p.c)}`)) return false; }
     state.genChip[p.r][p.c] = owner;
-    ps.usedTurnAction = true;
     log(`${label(owner)} bought a generator chip at ${coord(p.r,p.c)}.`);
     purchaseSfx();
+    finishTurnAction(owner, isHuman, p.id, `${label(owner)} bought a generator chip. You may buy land, then end turn.`);
     return true;
   }
 
-  function buildCustomGenerator(owner=PLAYER, pieceId=state.selected){
+  function buildCustomGenerator(owner=PLAYER, pieceId=state.selected, isHuman=false){
     const ps = state.players[owner];
     const p = state.pieces[pieceId];
-    if(!p || p.owner !== owner || p.captured || ps.usedTurnAction || ps.doubleMovesRemaining) return false;
+    if(!p || p.owner !== owner || p.captured || !hasActionSlot(owner)) return false;
     if(state.customGen[p.r][p.c]) return false;
     if(!voluntaryAffordable(owner,30)) return false;
     if(!transferGold(owner,BANK,30,`to build XX generator at ${coord(p.r,p.c)}`)) return false;
     state.customGen[p.r][p.c] = owner;
-    ps.usedTurnAction = true;
     log(`${label(owner)} built a custom XX generator at ${coord(p.r,p.c)}.`);
     purchaseSfx();
+    finishTurnAction(owner, isHuman, p.id, `${label(owner)} built an XX generator. You may buy land, then end turn.`);
     return true;
   }
 
@@ -1472,10 +1496,10 @@
     }
     // Buy generator chip if standing on a default generator and it makes sense.
     const genCandidate = livingPieces(owner).find(p => isDefaultGen(p.r,p.c) && state.genChip[p.r][p.c] !== owner && (state.players[owner].gold > (state.genChip[p.r][p.c] ? 13 : 9)));
-    if(genCandidate && !ps.usedTurnAction) return () => buyGeneratorChip(owner, genCandidate.id);
+    if(genCandidate && hasActionSlot(owner)) return () => buyGeneratorChip(owner, genCandidate.id, false);
 
     const customCandidate = bestCustomGenSpot(owner);
-    if(customCandidate && state.players[owner].gold > 38) return () => buildCustomGenerator(owner, customCandidate.id);
+    if(customCandidate && hasActionSlot(owner) && state.players[owner].gold > 38) return () => buildCustomGenerator(owner, customCandidate.id, false);
 
     if(shouldGoldDice(owner)) return () => goldDice(owner);
 
@@ -1937,12 +1961,13 @@
     const localHumanTurn = !waitingForOpponent && state.turn === owner && !state.gameOver && !state.pendingPromotion && !state.pendingCardPlacement && !shouldAutoAct(owner);
     const canAct = localHumanTurn && !ps.usedTurnAction && ps.doubleMovesRemaining <= 0;
     const canMoveAction = localHumanTurn && (!ps.usedTurnAction || ps.doubleMovesRemaining > 0);
+    const canSpendActionSlot = localHumanTurn && hasActionSlot(owner);
     const landCost = p ? landPurchaseCostAt(p.r,p.c,owner) : Infinity;
     setControlPrices(owner, p);
     el('buyLandBtn').disabled = !(localHumanTurn && p && state.land[p.r][p.c] !== owner && ps.landPurchases < 2 && (ps.freeLand || voluntaryAffordable(owner,landCost)));
     const genCost = p ? genChipCostAt(p.r,p.c,owner) : Infinity;
-    el('buyGenBtn').disabled = !(canAct && p && isDefaultGen(p.r,p.c) && state.genChip[p.r][p.c] !== owner && (ps.freeGenChip || voluntaryAffordable(owner,genCost)));
-    el('customGenBtn').disabled = !(canAct && p && !state.customGen[p.r][p.c] && voluntaryAffordable(owner,30));
+    el('buyGenBtn').disabled = !(canSpendActionSlot && p && isDefaultGen(p.r,p.c) && state.genChip[p.r][p.c] !== owner && (ps.freeGenChip || voluntaryAffordable(owner,genCost)));
+    el('customGenBtn').disabled = !(canSpendActionSlot && p && !state.customGen[p.r][p.c] && voluntaryAffordable(owner,30));
     el('doubleMoveBtn').disabled = !(localHumanTurn && !ps.usedTurnAction && !ps.doubleMovesRemaining && voluntaryAffordable(owner,6));
     el('drawCardBtn').disabled = !(canAct && canDrawPieceCard(owner));
     el('goldDiceBtn').disabled = !(canAct && voluntaryAffordable(owner,15));
@@ -2405,8 +2430,8 @@
     if(state.gameOver && action !== 'goldBar') return;
     if(action === 'square'){ handleSquareClickForOwner(owner, payload.r, payload.c, true); return; }
     if(action === 'buyLand'){ buyLand(owner,state.selected); return; }
-    if(action === 'buyGen'){ buyGeneratorChip(owner,state.selected); return; }
-    if(action === 'customGen'){ buildCustomGenerator(owner,state.selected); return; }
+    if(action === 'buyGen'){ buyGeneratorChip(owner,state.selected,true); return; }
+    if(action === 'customGen'){ buildCustomGenerator(owner,state.selected,true); return; }
     if(action === 'doubleMove'){ buyDoubleMove(owner); return; }
     if(action === 'drawCard'){ drawCard(owner); return; }
     if(action === 'goldDice'){ goldDice(owner); return; }
