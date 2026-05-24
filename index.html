@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v39</div>
+    <div class="versionBadge">Version v40</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -498,6 +498,8 @@
   };
   const files = ['a','b','c','d','e','f','g','h'];
   const START_CLOCK_MS = 30 * 60 * 1000;
+  const AI_THINK_MIN_MS = 1000;
+  const AI_THINK_MAX_MS = 10000;
   let clockInterval = null;
 
   const CARD_BACK = 'https://steamusercontent-a.akamaihd.net/ugc/2057617493352657144/EB19779C122B04B5E04B0A6F7BD039F5ACD9FF07/';
@@ -1601,17 +1603,25 @@
     return owner === AI || (owner === PLAYER && state?.autoPlayer);
   }
 
+  function randomAiThinkDelay(){
+    return AI_THINK_MIN_MS + Math.floor(Math.random() * (AI_THINK_MAX_MS - AI_THINK_MIN_MS + 1));
+  }
+
   function scheduleAutoTurn(delay=520){
     if(autoTimer){ clearTimeout(autoTimer); autoTimer = null; }
     if(!state || state.gameOver || state.pendingPromotion || state.pendingCardPlacement) return;
     if(shouldAutoAct(state.turn)){
-      autoTimer = setTimeout(() => { autoTimer = null; aiTakeTurn(); }, delay);
+      const thinkDelay = randomAiThinkDelay();
+      state.status = `${label(state.turn)} AI is thinking for ${(thinkDelay/1000).toFixed(1)} seconds.`;
+      autoTimer = setTimeout(() => { autoTimer = null; aiTakeTurn(); }, thinkDelay);
     }
   }
 
   function aiTakeTurn(){
     const owner = state.turn;
     if(state.gameOver || !shouldAutoAct(owner)) return;
+    settleClock();
+    if(state.gameOver) { render(); return; }
     try{
       if(state.pendingCardPlacement){ autoPlacePendingCard(); }
       if(state.gameOver) return;
@@ -2983,7 +2993,7 @@
   function getRemainingTime(owner){
     if(!state?.players?.[owner]) return START_CLOCK_MS;
     let ms = state.players[owner].timeMs ?? START_CLOCK_MS;
-    if(!state.gameOver && state.turn === owner && !shouldAutoAct(owner) && !clockIsPausedForNetwork()){
+    if(!state.gameOver && state.turn === owner && !clockIsPausedForNetwork()){
       ms -= Date.now() - (state.clockLastUpdate || Date.now());
     }
     return Math.max(0, ms);
@@ -2999,13 +3009,11 @@
       return;
     }
     const last = state.clockLastUpdate || now;
-    if(!shouldAutoAct(owner)){
-      state.players[owner].timeMs = Math.max(0, (state.players[owner].timeMs ?? START_CLOCK_MS) - (now - last));
-      if(state.players[owner].timeMs <= 0){
-        state.clockLastUpdate = now;
-        endGame(other(owner), `${label(owner)} lost on time.`);
-        return;
-      }
+    state.players[owner].timeMs = Math.max(0, (state.players[owner].timeMs ?? START_CLOCK_MS) - (now - last));
+    if(state.players[owner].timeMs <= 0){
+      state.clockLastUpdate = now;
+      endGame(other(owner), `${label(owner)} lost on time.`);
+      return;
     }
     state.clockLastUpdate = now;
   }
@@ -3014,7 +3022,7 @@
     if(!state) return;
     if(!state.gameOver && !isOnlineGuest() && !clockIsPausedForNetwork()){
       const owner = state.turn;
-      if(!shouldAutoAct(owner) && getRemainingTime(owner) <= 0){
+      if(getRemainingTime(owner) <= 0){
         settleClock();
         render();
         sendStateToPeer();
