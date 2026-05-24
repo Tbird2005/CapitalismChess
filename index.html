@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v38</div>
+    <div class="versionBadge">Version v39</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -1519,10 +1519,18 @@
     const ps = state.players[owner];
     if(ps.usedTurnAction || ps.doubleMovesRemaining) return false;
     if(!transferGold(owner,BANK,8,'for piece resurrection')) return false;
+
+    // Keep a reference to the resurrection claim before possibly creating a new
+    // lastCapture. If resurrection displaces an enemy piece, that displacement is
+    // still a capture and can itself be counter-resurrected.
     const lc = state.lastCapture;
     const {r,c} = lc.location;
+    const data = lc.captured;
     const occupant = getPieceAt(r,c);
+    let resurrectionCapture = null;
+
     if(occupant && occupant.owner !== owner){
+      resurrectionCapture = deepClone(occupant);
       occupant.captured = true;
       state.board[r][c] = null;
       log(`${label(owner)} resurrection captured ${label(occupant.owner)} ${occupant.type} with no gold bounty.`);
@@ -1533,11 +1541,24 @@
       ps.usedTurnAction = true;
       return true;
     }
-    const data = lc.captured;
+
     const newId = 'p' + nextPieceId++;
     state.pieces[newId] = {...data,id:newId,owner,captured:false,r,c,moved:true};
     state.board[r][c] = newId;
     lc.used = true;
+
+    if(resurrectionCapture){
+      state.lastCapture = {
+        owner: resurrectionCapture.owner,
+        captured: resurrectionCapture,
+        location:{r,c},
+        captorId:newId,
+        turnNumber: state.turnNumber,
+        used:false,
+        byResurrection:true
+      };
+    }
+
     ps.usedTurnAction = true;
     log(`${label(owner)} resurrected ${data.type} on ${coord(r,c)}.`);
     purchaseSfx();
