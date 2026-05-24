@@ -1499,9 +1499,9 @@
         return;
       }
 
-      if(hasKing(owner)) aiBuyLandPass(owner);
-      if(state.gameOver) return;
-
+      // Pick the turn action before spending the two land buys. Buying land
+      // first made the AI waste its land slots, then sometimes move its king
+      // onto an unprotected square with no way to insure it afterward.
       const action = chooseAiAction(owner);
       if(action) action();
       if(hasKing(owner)) aiBuyLandPass(owner);
@@ -1877,6 +1877,120 @@
     return ps.gold > 0;
   }
 
+
+  function landCostAtForState(tempState, owner, r, c){
+    const current = tempState.land?.[r]?.[c];
+    if(current === owner) return 0;
+    if(!current) return 1;
+    return hasKingQuiet(tempState, current) ? 2 : 3;
+  }
+
+  function canInsureKingSquareAfterMove(tempState, owner, r, c){
+    const ps = tempState.players[owner];
+    if(!ps) return false;
+    const current = tempState.land?.[r]?.[c];
+    if(current === owner) return true;
+    if(ps.landPurchases >= 2) return false;
+    const cost = landCostAtForState(tempState, owner, r, c);
+    if(ps.freeLand) return true;
+    // For a king square the AI can spend lower than its normal land reserve,
+    // but it should still avoid moving into a spot it cannot afford to protect.
+    return ps.gold - cost > 2;
+  }
+
+  function enemyCanCaptureSquareNow(victimOwner, r, c){
+    const enemy = other(victimOwner);
+    for(const ep of livingPieces(enemy)){
+      for(const emv of legalMovesForPiece(ep)){
+        if(emv.r === r && emv.c === c) return true;
+      }
+    }
+    return false;
+  }
+
+  function enemyCanDoubleMoveCaptureSquare(victimOwner, r, c){
+    const enemy = other(victimOwner);
+    if(!state.players[enemy] || !voluntaryAffordable(enemy, 6)) return false;
+
+    for(const ep of livingPieces(enemy)){
+      for(const first of legalMovesForPiece(ep)){
+        // Direct capture is handled separately. This function is looking for the
+        // common book punishment: buy double move, reposition, then take the king.
+        if(first.r === r && first.c === c) continue;
+        const temp = deepClone(state);
+        temp.players[enemy].gold -= 6;
+        if(temp.players[enemy].gold <= 0) continue;
+        if(!applyQuietAiMove(temp, enemy, ep.id, first)) continue;
+        const kingStillThere = Object.values(temp.pieces).some(k => !k.captured && k.owner === victimOwner && k.type === 'K' && k.r === r && k.c === c);
+        if(!kingStillThere) continue;
+        const canHit = withTemporaryState(temp, () => enemyCanCaptureSquareNow(victimOwner, r, c));
+        if(canHit) return true;
+      }
+    }
+    return false;
+  }
+
+  function evaluateKingMoveExposure(p, mv, money){
+    const owner = p.owner;
+    const target = getPieceAt(mv.r, mv.c);
+    const currentOwnLand = state.land[p.r]?.[p.c] === owner;
+    const currentEnemyAttacks = countEnemyAttacks(p.r, p.c, owner);
+
+    const temp = deepClone(state);
+    if(!applyQuietAiMove(temp, owner, p.id, mv)){
+      return {forbid:true, penalty:999, reason:'king move fails immediate money simulation'};
+    }
+
+    const movedKing = temp.pieces[p.id];
+    const destOwnLand = temp.land[movedKing.r]?.[movedKing.c] === owner;
+    const canBuyProtection = canInsureKingSquareAfterMove(temp, owner, movedKing.r, movedKing.c);
+    const protectedOrInsurable = destOwnLand || canBuyProtection;
+
+    const directThreat = withTemporaryState(temp, () => enemyCanCaptureSquareNow(owner, movedKing.r, movedKing.c));
+    const doubleThreat = !directThreat && withTemporaryState(temp, () => enemyCanDoubleMoveCaptureSquare(owner, movedKing.r, movedKing.c));
+
+    let penalty = 0;
+    let forbid = false;
+
+    // Leaving owned tax land for a square that cannot be insured is usually the
+    // exact blunder the AI made in the supplied log. Do not do it unless it is
+    // actually ending the game right now.
+    if(currentOwnLand && !protectedOrInsurable && !money.winsImmediately){
+      penalty += 75;
+      if(!target || target.type !== 'K') forbid = true;
+    }
+
+    if(!destOwnLand && !canBuyProtection){
+      penalty += 36;
+    } else if(canBuyProtection && !destOwnLand){
+      penalty += 6;
+    } else {
+      penalty -= 6;
+    }
+
+    if(directThreat){
+      penalty += protectedOrInsurable ? 28 : 140;
+      if(!protectedOrInsurable && !money.winsImmediately) forbid = true;
+    }
+    if(doubleThreat){
+      penalty += protectedOrInsurable ? 18 : 110;
+      if(!protectedOrInsurable && !money.winsImmediately) forbid = true;
+    }
+
+    // If the current square was already protected and not directly attacked, a
+    // quiet king shuffle needs a very good reason. Otherwise it invites the
+    // opponent's double-move king hunt.
+    if(currentOwnLand && currentEnemyAttacks === 0 && !target && !isDefaultGen(mv.r,mv.c) && !state.customGen[mv.r][mv.c]){
+      penalty += 18;
+      if(!destOwnLand && !money.winsImmediately){
+        penalty += 40;
+        forbid = true;
+      }
+    }
+
+    return {forbid, penalty, directThreat, doubleThreat, destOwnLand, canBuyProtection, protectedOrInsurable};
+  }
+
   function allMoves(owner){
     const arr = [];
     for(const p of livingPieces(owner)){
@@ -1887,6 +2001,13 @@
         // landing tax because that enemy is now kingless. If the AI can tank it, fine.
         // If not, the move is removed from consideration instead of throwing the game.
         if(money.bankruptsSelf && !money.winsImmediately) continue;
+
+        if(p.type === 'K' && !mv.special){
+          const exposure = evaluateKingMoveExposure(p, mv, money);
+          money.kingExposure = exposure;
+          if(exposure.forbid && !money.winsImmediately) continue;
+        }
+
         arr.push({pieceId:p.id, move:mv, score:scoreMove(p,mv,money), money});
       }
     }
@@ -2037,8 +2158,13 @@
       if(mv.r === end) score += 18;
     }
     if(p.type === 'K'){
-      // Kings matter for economy, but no check rules. Keep it away from cheap captures.
+      // Kings are not just pieces in this game. They are the economy engine.
+      // The AI should not shuffle a protected king into a free double-move kill.
+      const exposure = money.kingExposure || evaluateKingMoveExposure(p, mv, money);
       score -= countEnemyAttacks(mv.r,mv.c,p.owner) * 4;
+      score -= exposure.penalty || 0;
+      if(exposure.destOwnLand) score += 5;
+      if(exposure.canBuyProtection && !exposure.destOwnLand) score += 2;
     } else {
       score -= countEnemyAttacks(mv.r,mv.c,p.owner) * Math.min(3.2, pieceValues[p.type] * .85);
     }
@@ -2085,6 +2211,13 @@
     const ps = state.players[owner];
     if(!ps || ps.landPurchases >= 2) return;
 
+    // First priority: if the AI has moved a king onto a square it does not own,
+    // buy that king square before doing any normal land logic. This prevents the
+    // AI from walking a financially protected king off tax land, then ending the
+    // turn with a naked king that can be double-move punished for free.
+    aiForceProtectKingLand(owner);
+    if(ps.landPurchases >= 2) return;
+
     // Land is not supposed to be spammed by the AI. It is insurance, control,
     // and payback for important captures. Score every occupied square first,
     // then only buy the ones that actually have strategic value.
@@ -2100,6 +2233,39 @@
       if(!aiCanSpendOnLand(owner, x.cost, x.score)) continue;
       buyLand(owner, x.p.id);
     }
+  }
+
+
+  function aiForceProtectKingLand(owner){
+    const ps = state.players[owner];
+    if(!ps || ps.landPurchases >= 2) return false;
+
+    const kings = livingPieces(owner)
+      .filter(p => p.type === 'K' && state.land[p.r][p.c] !== owner)
+      .map(p => {
+        const direct = enemyCanCaptureSquareNow(owner, p.r, p.c);
+        const dbl = !direct && enemyCanDoubleMoveCaptureSquare(owner, p.r, p.c);
+        const cost = landCostForPiece(p);
+        let score = 100;
+        if(direct) score += 80;
+        if(dbl) score += 55;
+        if(state.land[p.r][p.c] === other(owner)) score += 35;
+        score -= cost * 4;
+        return {p, cost, score};
+      })
+      .sort((a,b) => b.score - a.score);
+
+    let bought = false;
+    for(const k of kings){
+      if(ps.landPurchases >= 2) break;
+      // For a king square, ignore the normal AI land reserve. This is not a
+      // random investment. It is resurrection/tax insurance. buyLand still
+      // requires the side to survive the purchase.
+      if(ps.freeLand || voluntaryAffordable(owner, k.cost)){
+        if(buyLand(owner, k.p.id)) bought = true;
+      }
+    }
+    return bought;
   }
 
   function landCostForPiece(p){
