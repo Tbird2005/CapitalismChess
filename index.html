@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v37</div>
+    <div class="versionBadge">Version v38</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -340,7 +340,7 @@
 <div class="menuScreen hidden" id="multiplayerMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Multiplayer</h2>
-    <div class="menuSub">Host creates a room code. The other player types that exact 4 character code. Capital letters matter.</div>
+    <div class="menuSub">Host creates a room code. The other player types or pastes that 4 character code.</div>
     <div class="menuActions">
       <button id="menuHostBtn" class="bigPrimary">Host a Game</button>
       <input id="menuJoinCodeInput" class="menuInput" placeholder="Code" maxlength="4" autocomplete="off" spellcheck="false" />
@@ -518,6 +518,18 @@
     error:'https://file.garden/ZtDesvPK_QLwMx9K/HTML/txt/computer-error-sound_JGfLFrG.mp3'
   };
   const defaultGenerators = new Set(['3,3','3,4','4,3','4,4']);
+  function peerOptions(){
+    return {
+      debug: 1,
+      config: {
+        iceServers: [
+          {urls:'stun:stun.l.google.com:19302'},
+          {urls:'stun:stun1.l.google.com:19302'},
+          {urls:'stun:global.stun.twilio.com:3478'}
+        ]
+      }
+    };
+  }
   let state;
   let nextPieceId = 1;
   let playerAutoEnabled = false;
@@ -566,14 +578,18 @@
   function purchaseSfx(){ playSfx('purchase'); }
 
   function generateRoomCode(){
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
     let out = '';
     for(let i=0;i<4;i++) out += chars[Math.floor(Math.random()*chars.length)];
     return out;
   }
 
+  function normalizeRoomCode(code){
+    return String(code || '').replace(/[^A-Za-z0-9]/g,'').slice(0,4).toUpperCase();
+  }
+
   function validRoomCode(code){
-    return /^[A-Za-z0-9]{4}$/.test(code);
+    return /^[A-Z0-9]{4}$/.test(normalizeRoomCode(code));
   }
 
   function createInitialState(){
@@ -3272,7 +3288,7 @@
     const inGamePanel = el('inGameOnlinePanel');
     const copyBtn = el('copyLinkBtn');
     const codeText = net.roomCode ? net.roomCode : 'none';
-    if(roomBox) roomBox.textContent = `Room code: ${codeText}${net.roomCode && net.role === 'host' ? '  • case-sensitive' : ''}`;
+    if(roomBox) roomBox.textContent = `Room code: ${codeText}${net.roomCode && net.role === 'host' ? '' : ''}`;
     if(statusEl) statusEl.textContent = net.status;
     if(inGamePanel) inGamePanel.classList.toggle('hidden', net.mode === 'local');
     const gameStatusPanel = el('gameStatusPanel');
@@ -3331,7 +3347,8 @@
   }
 
   function joinFromMenu(){
-    const code = (el('menuJoinCodeInput')?.value || '').trim();
+    const code = normalizeRoomCode(el('menuJoinCodeInput')?.value || '');
+    if(el('menuJoinCodeInput')) el('menuJoinCodeInput').value = code;
     if(el('joinCodeInput')) el('joinCodeInput').value = code;
     joinFriendGame();
   }
@@ -3431,10 +3448,10 @@
     net.connected = false;
     net.roomCode = generateRoomCode();
     net.status = 'Creating 4 character room code...';
-    net.peer = new Peer(net.roomCode);
+    net.peer = new Peer(net.roomCode, peerOptions());
     net.peer.on('open', id => {
       net.roomCode = id;
-      net.status = 'Room ready. Send this exact 4 character code to the other player. Capital letters matter. Game is paused until they connect.';
+      net.status = 'Room ready. Send this exact 4 character code to the other player. Game is paused until they connect.';
       resetGame();
       renderNetwork();
     });
@@ -3465,7 +3482,7 @@
 
   function joinFriendGame(){
     if(!window.Peer){ setNetStatus('PeerJS did not load. Open the hosted site with internet access.'); return; }
-    const code = el('joinCodeInput').value.trim();
+    const code = normalizeRoomCode(el('joinCodeInput').value);
     if(!code){
       playSfx('error', false);
       setNetStatus('Paste a valid active 4 character room code first.');
@@ -3475,8 +3492,8 @@
     }
     if(!validRoomCode(code)){
       playSfx('error', false);
-      setNetStatus('Invalid room code. Enter exactly 4 letters or numbers from the host.');
-      showNetAlert('Invalid room code. Enter exactly 4 letters or numbers from the host.');
+      setNetStatus('Invalid room code. Enter the 4 character code from the host.');
+      showNetAlert('Invalid room code. Enter the 4 character code from the host.');
       showMultiplayerMenu();
       return;
     }
@@ -3487,13 +3504,13 @@
     net.remoteOwner = PLAYER;
     net.roomCode = code;
     net.connected = false;
-    net.status = `Trying to join room ${code}... Codes are case-sensitive.`;
-    net.peer = new Peer();
+    net.status = `Trying to join room ${code}... Waiting for the host connection.`;
+    net.peer = new Peer(undefined, peerOptions());
     net.joinTimer = setTimeout(()=>{
       if(!net.connected){
-        failJoin('Invalid or inactive room code. Ask the host for a valid active 4 character code.');
+        failJoin('Invalid or inactive room code. Ask the host for the current 4 character code and make sure the host page is still open.');
       }
-    }, 9000);
+    }, 25000);
     net.peer.on('open', () => {
       const conn = net.peer.connect(code, {reliable:true});
       net.conn = conn;
@@ -3501,7 +3518,7 @@
     });
     net.peer.on('error', err => {
       const msg = err?.type === 'peer-unavailable'
-        ? 'Invalid or inactive room code. Ask the host for a valid active 4 character code.'
+        ? 'Invalid or inactive room code. Ask the host for the current 4 character code and make sure the host page is still open.'
         : 'Network error while joining: ' + (err?.message || err);
       failJoin(msg);
     });
@@ -3532,7 +3549,7 @@
       if(net.suppressCloseAlert) return;
       const wasJoining = net.mode === 'joining' || (net.role === 'guest' && !net.connected);
       if(wasJoining){
-        failJoin('Invalid or inactive room code. Ask the host for a valid active 4 character code.');
+        failJoin('Invalid or inactive room code. Ask the host for the current 4 character code and make sure the host page is still open.');
         return;
       }
       const message = net.role === 'host'
@@ -3651,7 +3668,7 @@
     if(!net.roomCode || net.role !== 'host') return;
     const text = net.roomCode;
     if(navigator.clipboard?.writeText){
-      navigator.clipboard.writeText(text).then(()=>setNetStatus('4 character room code copied. Send that exact code to your friend. Capital letters matter.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
+      navigator.clipboard.writeText(text).then(()=>setNetStatus('4 character room code copied. Send that exact code to your friend.')).catch(()=>setNetStatus('Copy failed. Room code is shown above.'));
     } else {
       setNetStatus('Clipboard not available. Copy the room code shown above.');
     }
@@ -3661,8 +3678,9 @@
     try{
       const code = new URL(window.location.href).searchParams.get('room');
       if(code){
-        el('joinCodeInput').value = code;
-        if(el('menuJoinCodeInput')) el('menuJoinCodeInput').value = code;
+        const room = normalizeRoomCode(code);
+        el('joinCodeInput').value = room;
+        if(el('menuJoinCodeInput')) el('menuJoinCodeInput').value = room;
         showMultiplayerMenu();
       }
     }catch(e){}
@@ -3694,7 +3712,7 @@
     el('disconnectNetBtn').addEventListener('click',()=>cleanupNetwork(false));
     el('copyLinkBtn').addEventListener('click',copyInviteLink);
     el('joinCodeInput').addEventListener('input', e => {
-      e.target.value = e.target.value.replace(/[^A-Za-z0-9]/g,'').slice(0,4);
+      e.target.value = normalizeRoomCode(e.target.value);
     });
     el('playOfflineBtn').addEventListener('click',startOfflineFromMenu);
     el('playMultiplayerMenuBtn').addEventListener('click',showMultiplayerMenu);
@@ -3702,7 +3720,7 @@
     el('menuHostBtn').addEventListener('click',hostFromMenu);
     el('menuJoinBtn').addEventListener('click',joinFromMenu);
     el('menuJoinCodeInput').addEventListener('input', e => {
-      e.target.value = e.target.value.replace(/[^A-Za-z0-9]/g,'').slice(0,4);
+      e.target.value = normalizeRoomCode(e.target.value);
       if(el('joinCodeInput')) el('joinCodeInput').value = e.target.value;
     });
     el('menuJoinCodeInput').addEventListener('keydown', e => {
