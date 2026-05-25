@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v43</div>
+    <div class="versionBadge">Version v44</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -3119,6 +3119,10 @@
 
   // RENDER SECTION
   function render(){
+    if(!state){
+      renderNetwork();
+      return;
+    }
     renderScores();
     renderBoard();
     renderControls();
@@ -3605,11 +3609,10 @@
 
   function startOfflineFromMenu(){
     cleanupNetwork(false);
+    resetGame();
     showGameScreen();
-    if(state){
-      state.status = `Offline game. You control the ${sideLabel(PLAYER)} side.`;
-      render();
-    }
+    state.status = `Offline game. You control the ${sideLabel(PLAYER)} side.`;
+    render();
   }
 
   function hostFromMenu(){
@@ -4004,7 +4007,7 @@
   loadRoomFromUrl();
   if(clockInterval) clearInterval(clockInterval);
   clockInterval = setInterval(tickClock, 1000);
-  resetGame();
+  renderNetwork();
 })();
 
 </script>
