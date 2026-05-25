@@ -330,7 +330,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v57</div>
+    <div class="versionBadge">Version v58</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -1345,8 +1345,7 @@
   }
 
   function canDrawPieceCard(owner){
-    const ps = state.players[owner];
-    return !ps.usedTurnAction && !ps.doubleMovesRemaining && voluntaryAffordable(owner,5) && openBackRankSlots(owner).length > 0;
+    return hasActionSlot(owner) && !state.pendingCardPlacement && voluntaryAffordable(owner,5) && openBackRankSlots(owner).length > 0;
   }
 
   function drawCard(owner=PLAYER){
@@ -1369,7 +1368,7 @@
     const slot = chooseCardPlacementSlot(owner, pieceType);
     if(!slot){
       log(`${label(owner)} had no open back-rank slot. The card could not be placed.`);
-      ps.usedTurnAction = true;
+      finishTurnAction(owner, false, null, `${label(owner)} drew a card but had no open back-rank slot.`);
       return true;
     }
     placeDrawnCard(owner, pieceType, slot.r, slot.c);
@@ -1415,10 +1414,10 @@
   function placeDrawnCard(owner, pieceType, r, c){
     if(r !== backRankRow(owner) || state.board[r][c]) return false;
     addPiece(state, owner, pieceType, r, c, {fromCard:true, pawnStartRow: pieceType === 'P' ? r : undefined});
-    state.players[owner].usedTurnAction = true;
     const pawnNote = pieceType === 'P' ? ' It starts on your back rank and only promotes on the enemy back rank.' : '';
     state.status = `${label(owner)} placed a drawn ${pieceType} on ${coord(r,c)}.${pawnNote}`;
     log(`${label(owner)} placed the drawn ${pieceType} on ${coord(r,c)}.${pieceType === 'P' ? ' Pawn start row set to that back rank.' : ''}`);
+    finishTurnAction(owner, false, null, `${label(owner)} placed a drawn ${pieceType}.`);
     return true;
   }
 
@@ -1428,7 +1427,7 @@
     const slot = chooseCardPlacementSlot(pending.owner, pending.pieceType);
     state.pendingCardPlacement = null;
     if(slot) return placeDrawnCard(pending.owner, pending.pieceType, slot.r, slot.c);
-    state.players[pending.owner].usedTurnAction = true;
+    finishTurnAction(pending.owner, false, null, `${label(pending.owner)} had no open back-rank slot for the drawn card.`);
     return false;
   }
 
@@ -1919,6 +1918,12 @@
         return;
       }
 
+      const moveThenGeneratorChipAction = chooseAiMoveThenGeneratorChipAction(owner);
+      if(moveThenGeneratorChipAction){
+        runAiActionAndFinish(owner, moveThenGeneratorChipAction);
+        return;
+      }
+
       const generatorParityAction = chooseAiGeneratorParityAction(owner);
       if(generatorParityAction){
         runAiActionAndFinish(owner, generatorParityAction);
@@ -2000,6 +2005,24 @@
     // has an equal 1-in-6 chance to be a king. The AI will try this before
     // wasting its action on normal development while kingless.
     if(canDrawPieceCard(owner)){
+      // When kingless and resurrection is unavailable, two card draws can be a
+      // real Double Move use: two independent 1-in-6 chances instead of praying
+      // on one card and passing the turn.
+      if(voluntaryAffordable(owner,6) && ps.gold > 16 && openBackRankSlots(owner).length >= 2){
+        return () => ({
+          aiSteps:[
+            () => {
+              log(`${label(owner)} AI buys Double Move for two emergency king card chances.`);
+              buyDoubleMove(owner);
+            },
+            () => drawCard(owner),
+            () => {
+              if(!hasKing(owner) && canDrawPieceCard(owner)) drawCard(owner);
+            }
+          ]
+        });
+      }
+
       // When the AI is kingless and cannot resurrect, a random piece card is not
       // just a meme. It is often the only realistic 1-in-6 route back into the
       // game or into an extra-king economy race. Even if a miss can bankrupt it
@@ -2233,6 +2256,19 @@
     // random piece card and hope for the 1-in-6 king. Limit the number of
     // opening attempts so it does not throw the economy every game.
     if(canDrawPieceCard(owner) && aiOpeningEconomyReady(owner) && aiCurrentTaxBurden(owner) === 0 && ps.gold > 14 + style.reserveShift && (ps.kingGambitDraws || 0) < 2 && Math.random() < (.55 + style.cardRisk)){
+      if(voluntaryAffordable(owner,6) && ps.gold > 22 + style.reserveShift && openBackRankSlots(owner).length >= 2 && (ps.kingGambitDraws || 0) === 0 && Math.random() < .38){
+        return () => ({
+          aiSteps:[
+            () => {
+              ps.kingGambitDraws = (ps.kingGambitDraws || 0) + 2;
+              log(`${label(owner)} AI uses Double Move for a two-card extra-king gambit.`);
+              buyDoubleMove(owner);
+            },
+            () => drawCard(owner),
+            () => { if(canDrawPieceCard(owner)) drawCard(owner); }
+          ]
+        });
+      }
       return () => {
         ps.kingGambitDraws = (ps.kingGambitDraws || 0) + 1;
         log(`${label(owner)} AI tries the early extra-king card gambit.`);
@@ -2321,6 +2357,19 @@
     if(shouldGoldDice(owner, style)) return () => goldDice(owner);
 
     const best = bestMoveFor(owner, style);
+
+    if(aiShouldDrawPieceCard(owner, best, style) && voluntaryAffordable(owner,6) && ps.gold > 22 + Math.max(0, style.reserveShift) && openBackRankSlots(owner).length >= 2 && Math.random() < (.28 + style.cardRisk*.25)){
+      return () => ({
+        aiSteps:[
+          () => {
+            log(`${label(owner)} AI uses Double Move for two card actions.`);
+            buyDoubleMove(owner);
+          },
+          () => drawCard(owner),
+          () => { if(canDrawPieceCard(owner)) drawCard(owner); }
+        ]
+      });
+    }
 
     if(aiShouldDrawPieceCard(owner, best, style)) return () => drawCard(owner);
 
@@ -3595,6 +3644,69 @@
       generatorDeficit: Math.max(0, enemyChips + 1 - ownChips),
       needsPush: ownIncome < enemyIncome || ownChips <= enemyChips
     };
+  }
+
+  function chooseAiMoveThenGeneratorChipAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(!voluntaryAffordable(owner,6)) return null;
+
+    const style = getAiStyle(owner);
+    const status = aiGeneratorGoalStatus(owner);
+    if(!status.needsPush && status.ownIncome >= status.enemyIncome && status.ownChips >= status.enemyChips + 1) return null;
+
+    const reserve = status.incomeBehind ? Math.max(2, 5 + Math.min(2, style.reserveShift || 0)) : Math.max(4, 7 + Math.max(0, style.reserveShift || 0));
+    let best = null;
+    let bestScore = -99999;
+
+    for(const m of allMoves(owner, style)){
+      if(!isDefaultGen(m.move.r,m.move.c)) continue;
+      const chip = state.genChip[m.move.r][m.move.c];
+      if(chip === owner) continue;
+      if(m.move.r === pawnPromotionRow(owner) && state.pieces[m.pieceId]?.type === 'P') continue;
+      if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner, m.money, getPieceAt(m.move.r,m.move.c))) continue;
+
+      const chipCost = chip === other(owner) ? 8 : 5;
+      const afterMoveGold = (m.money?.afterGold ?? ps.gold) - 6;
+      if(afterMoveGold <= chipCost + reserve) continue;
+      if(!voluntaryAffordable(owner,6 + (m.move.cost || 0))) continue;
+
+      const target = getPieceAt(m.move.r,m.move.c);
+      let score = m.score + 45;
+      if(chip === other(owner)) score += 40;       // stealing is a two income swing
+      else score += 20;
+      if(status.incomeBehind) score += 28;
+      if(status.generatorDeficit > 0) score += status.generatorDeficit * 16;
+      if(target && target.owner === other(owner)) score += (pieceValues[target.type] || 1) * 4;
+      if(state.land[m.move.r][m.move.c] === owner) score += 8;
+      else if(state.land[m.move.r][m.move.c] === other(owner)) score -= hasKing(other(owner)) ? 2 : 8;
+      score -= (m.move.cost || 0) * 3;
+      score -= chipCost * 1.6;
+      score += afterMoveGold * .2;
+
+      if(score > bestScore){
+        bestScore = score;
+        best = {...m, chipCost, stealing: chip === other(owner), doubleChipScore:score};
+      }
+    }
+
+    if(!best || bestScore < (best.stealing ? 58 : 52)) return null;
+
+    return () => ({
+      aiSteps:[
+        () => {
+          log(`${label(owner)} AI buys Double Move to move onto a generator and take the chip the same turn.`);
+          buyDoubleMove(owner);
+        },
+        () => executeMove(best.pieceId, best.move, false),
+        () => {
+          const p = state.pieces[best.pieceId];
+          if(p && !p.captured && p.owner === owner && hasGeneratorAt(p.r,p.c) && state.genChip[p.r][p.c] !== owner){
+            buyGeneratorChip(owner, p.id, false);
+          }
+        }
+      ]
+    });
   }
 
   function chooseAiGeneratorParityAction(owner){
@@ -5160,7 +5272,7 @@
     el('buyGenBtn').disabled = !(canSpendActionSlot && p && hasGeneratorAt(p.r,p.c) && state.genChip[p.r][p.c] !== owner && (ps.freeGenChip || voluntaryAffordable(owner,genCost)));
     el('customGenBtn').disabled = !(canSpendActionSlot && p && !state.customGen[p.r][p.c] && voluntaryAffordable(owner,30));
     el('doubleMoveBtn').disabled = !(localHumanTurn && !ps.usedTurnAction && !ps.doubleMovesRemaining && voluntaryAffordable(owner,6));
-    el('drawCardBtn').disabled = !(canAct && canDrawPieceCard(owner));
+    el('drawCardBtn').disabled = !(canSpendActionSlot && canDrawPieceCard(owner));
     el('goldDiceBtn').disabled = !(canAct && voluntaryAffordable(owner,15));
     const castleBuyLegal = canAct && ps.castlingRightsTurn == null && !ps.castlingUsed && voluntaryAffordable(owner,3);
     const canCastleK = canMoveAction && castleInfo(owner,'king').ok;
