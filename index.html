@@ -330,7 +330,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v45</div>
+    <div class="versionBadge">Version v46</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -344,14 +344,17 @@
 <div class="menuScreen hidden" id="multiplayerMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Multiplayer</h2>
-    <div class="menuSub">Host creates a room code. The other player types that exact 4 character code. Capital letters matter.</div>
+    <div class="menuSub">Multiplayer is Peer to Peer. Both players connect directly through the browser using PeerJS. Host creates a room code. The other player types that exact 4 character code. Capital letters matter.</div>
+    <div class="menuSmall" style="margin:10px 0 12px;padding:10px 12px;border:1px solid rgba(255,170,40,.55);border-radius:12px;background:rgba(255,140,0,.12);color:#ffd08a;font-weight:800">
+      ⚠️ VPN warning: VPNs, strict firewalls, school/work networks, and some mobile hotspots can block Peer to Peer connections. Turn off VPNs on both computers if multiplayer will not connect.
+    </div>
     <div class="menuActions">
       <button id="menuHostBtn" class="bigPrimary">Host a Game</button>
       <input id="menuJoinCodeInput" class="menuInput" placeholder="Code" maxlength="4" autocomplete="off" spellcheck="false" />
       <button id="menuJoinBtn" class="bigWarn">Join With Code</button>
       <button id="menuBackBtn">Back</button>
     </div>
-    <div class="menuSmall" id="menuNetStatus">Use the room code shown after hosting. Do not use the website URL as the room code.</div>
+    <div class="menuSmall" id="menuNetStatus">Use the room code shown after hosting. Do not use the website URL as the room code. This is Peer to Peer. VPNs commonly make it fail.</div>
   </div>
 </div>
 
