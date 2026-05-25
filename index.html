@@ -330,7 +330,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v49</div>
+    <div class="versionBadge">Version v50</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -613,6 +613,7 @@
       legalMoves: [],
       mode: null,
       modeOwner: null,
+      teleportKingId: null,
       pendingPromotion: null,
       pendingCardPlacement: null,
       resurrectionBattles: {},
@@ -1453,6 +1454,7 @@
     if(state.mode !== 'teleport' || state.modeOwner !== owner) return false;
     state.mode = null;
     state.modeOwner = null;
+    state.teleportKingId = null;
     state.selected = null;
     state.legalMoves = [];
     state.status = 'King teleport cancelled. You can still choose another action.';
@@ -1481,22 +1483,39 @@
       render();
       return;
     }
-    const king = livingPieces(owner).find(p => p.type === 'K');
+    const kings = livingPieces(owner).filter(p => p.type === 'K');
+    const selectedKing = state.selected ? state.pieces[state.selected] : null;
+    let king = selectedKing && selectedKing.owner === owner && selectedKing.type === 'K' && !selectedKing.captured ? selectedKing : null;
+
+    if(kings.length > 1 && !king){
+      state.status = 'You have multiple kings. Select the specific king you want to teleport first, then click King Teleport.';
+      render();
+      return;
+    }
+
+    king = king || kings[0];
     state.mode = 'teleport';
     state.modeOwner = owner;
+    state.teleportKingId = king ? king.id : null;
     state.selected = king ? king.id : null;
     state.legalMoves = [];
-    state.status = 'TELEPORT ACTIVE: click any purple highlighted empty square to move your king. Click King Teleport again to cancel.';
+    state.status = `TELEPORT ACTIVE: ${label(owner)} ${king?.type || 'king'} on ${king ? coord(king.r,king.c) : 'unknown'} selected. Click any purple highlighted empty square to move that king. Click King Teleport again to cancel.`;
     render();
   }
 
   function teleportOwnerTo(owner,r,c){
     if(!inBounds(r,c) || state.board[r][c]){ state.status = 'Teleport needs an empty square. Click a purple highlighted tile, or click King Teleport again to cancel.'; render(); return; }
-    const king = livingPieces(owner).find(p => p.type === 'K');
-    if(!king) return;
+    const kingId = state.teleportKingId || state.selected;
+    const king = kingId ? state.pieces[kingId] : null;
+    if(!king || king.owner !== owner || king.type !== 'K' || king.captured){
+      state.status = 'Teleport needs a selected living king. Cancel and select the king again.';
+      render();
+      return;
+    }
     if(!teleportKing(owner, king.id, r, c)) return;
     state.mode = null;
     state.modeOwner = null;
+    state.teleportKingId = null;
     state.selected = king.id;
     render();
   }
@@ -1882,6 +1901,12 @@
 
       if(state.players[owner].gold >= 100){ buyGoldBar(owner); render(); return; }
 
+      const kingCoverDefenseAction = findAiKingCoverDefenseAction(owner);
+      if(kingCoverDefenseAction){
+        runAiActionAndFinish(owner, kingCoverDefenseAction);
+        return;
+      }
+
       const kingCoverCaptureAction = findAiKingCaptureCoverAction(owner, getAiStyle(owner));
       if(kingCoverCaptureAction){
         runAiActionAndFinish(owner, kingCoverCaptureAction);
@@ -1897,6 +1922,12 @@
       const economyBookAction = chooseAiOpeningEconomyAction(owner);
       if(economyBookAction){
         runAiActionAndFinish(owner, economyBookAction);
+        return;
+      }
+
+      const centerPressureAction = chooseAiCenterPressureAction(owner);
+      if(centerPressureAction){
+        runAiActionAndFinish(owner, centerPressureAction);
         return;
       }
 
@@ -2309,6 +2340,271 @@
     }
 
     return gold > 0;
+  }
+
+  function countOwnDefenders(r,c,owner,ignoreId=null){
+    let count = 0;
+    for(const p of livingPieces(owner)){
+      if(p.id === ignoreId) continue;
+      const moves = pseudoAttacks(p);
+      if(moves.some(m => m.r === r && m.c === c)) count++;
+    }
+    return count;
+  }
+
+  function findEnemyKingCoverCaptureThreat(owner, kingId=null){
+    const enemy = other(owner);
+    const enemyPs = state.players[enemy];
+    if(!enemyPs || enemyPs.gold <= 6 || !voluntaryAffordable(enemy,6)) return null;
+
+    const kings = livingPieces(owner).filter(p => p.type === 'K' && (!kingId || p.id === kingId));
+    if(!kings.length) return null;
+    const kingIds = new Set(kings.map(k => k.id));
+
+    const base = deepClone(state);
+    base.players[enemy].gold -= 6;
+    if(base.players[enemy].gold <= 0) return null;
+
+    for(const attacker of livingPieces(enemy)){
+      for(const first of legalMovesForPiece(attacker)){
+        const firstTarget = getPieceAt(first.r, first.c);
+        if(!firstTarget || firstTarget.owner !== owner || firstTarget.type !== 'K' || !kingIds.has(firstTarget.id)) continue;
+
+        const temp = deepClone(base);
+        if(!applyQuietAiMove(temp, enemy, attacker.id, first)) continue;
+
+        // If the king capture itself wins by bankruptcy, that is still a threat.
+        if(temp.gameOver){
+          return {kingId:firstTarget.id, kingCoord:coord(first.r,first.c), first:{pieceId:attacker.id, move:{...first}}, second:null};
+        }
+
+        const second = withTemporaryState(temp, () => {
+          const style = getAiStyle(enemy);
+          const options = [];
+          for(const m of allMoves(enemy, style)){
+            const t = getPieceAt(m.move.r, m.move.c);
+            if(!t || t.owner !== owner || t.type === 'K') continue;
+            if(m.money?.bankruptsSelf && !m.money?.winsImmediately) continue;
+            options.push({pieceId:m.pieceId, move:{...m.move}, targetType:t.type, score:m.score, money:m.money});
+          }
+          options.sort((a,b) => b.score - a.score);
+          return options[0] || null;
+        });
+
+        if(second){
+          return {kingId:firstTarget.id, kingCoord:coord(first.r,first.c), first:{pieceId:attacker.id, move:{...first}}, second};
+        }
+      }
+    }
+
+    return null;
+  }
+
+  function isKingSafeInProjectedState(tempState, owner, kingId){
+    const king = tempState.pieces[kingId];
+    if(!king || king.captured || king.owner !== owner || king.type !== 'K') return false;
+
+    return withTemporaryState(tempState, () => {
+      if(enemyCanCaptureSquareNow(owner, king.r, king.c)) return false;
+      if(enemyCanDoubleMoveCaptureSquare(owner, king.r, king.c)) return false;
+      if(findEnemyKingCoverCaptureThreat(owner, kingId)) return false;
+      return true;
+    });
+  }
+
+  function findSafeKingMoveFromCoverThreat(owner, kingId){
+    const king = state.pieces[kingId];
+    if(!king || king.captured || king.owner !== owner || king.type !== 'K') return null;
+
+    const moves = legalMovesForPiece(king);
+    let best = null;
+    let bestScore = -99999;
+
+    for(const mv of moves){
+      const money = estimateMoveMoneyResult(king, mv);
+      if(money.bankruptsSelf && !money.winsImmediately) continue;
+      const temp = deepClone(state);
+      if(!applyQuietAiMove(temp, owner, king.id, mv)) continue;
+      if(!isKingSafeInProjectedState(temp, owner, king.id)) continue;
+
+      const destLand = state.land[mv.r][mv.c];
+      let score = 40;
+      if(destLand === owner) score += 24;
+      else if(!destLand) score += 6;
+      else score -= hasKing(destLand) ? 5 : 18;
+      if(hasGeneratorAt(mv.r,mv.c)) score += 5;
+      if(state.customGen[mv.r][mv.c]) score += 8;
+      score -= countEnemyAttacks(mv.r,mv.c,owner) * 6;
+      score += countOwnDefenders(mv.r,mv.c,owner,king.id) * 3;
+      score += Math.max(0, money.afterGold || 0) * .25;
+      score -= (mv.cost || 0) * 2.5;
+
+      if(score > bestScore){
+        bestScore = score;
+        best = {move:{...mv}, score};
+      }
+    }
+
+    return best;
+  }
+
+  function estimateTeleportResult(tempState, owner, kingId, r, c){
+    const ps = tempState.players[owner];
+    const king = tempState.pieces[kingId];
+    if(!ps || !king || king.captured || tempState.board[r][c]) return false;
+
+    ps.gold -= 10;
+    if(ps.gold <= 0) return false;
+
+    tempState.board[king.r][king.c] = null;
+    king.r = r;
+    king.c = c;
+    king.moved = true;
+    tempState.board[r][c] = king.id;
+
+    const landOwner = tempState.land[r][c];
+    if(landOwner && landOwner !== owner){
+      const tax = hasKingQuiet(tempState, landOwner) ? 1 : 6;
+      ps.gold -= tax;
+      tempState.players[landOwner].gold += tax;
+      if(ps.gold <= 0) return false;
+    }
+
+    if(isDefaultGen(r,c)){
+      const chipOwner = tempState.genChip[r][c];
+      if(!chipOwner || chipOwner === owner) ps.gold += 1;
+    }
+    if(tempState.customGen[r][c]) ps.gold += isDefaultGen(r,c) ? 6 : 5;
+
+    return ps.gold > 0;
+  }
+
+  function findSafeKingTeleportSquare(owner, kingId){
+    const ps = state.players[owner];
+    const king = state.pieces[kingId];
+    if(!ps || !king || king.captured || king.owner !== owner || king.type !== 'K') return null;
+    if(ps.usedTurnAction || ps.doubleMovesRemaining || !voluntaryAffordable(owner,10)) return null;
+
+    let best = null;
+    let bestScore = -99999;
+
+    for(let r=0;r<SIZE;r++){
+      for(let c=0;c<SIZE;c++){
+        if(state.board[r][c]) continue;
+
+        const temp = deepClone(state);
+        if(!estimateTeleportResult(temp, owner, kingId, r, c)) continue;
+        if(!isKingSafeInProjectedState(temp, owner, kingId)) continue;
+
+        const landOwner = state.land[r][c];
+        const enemyAttacks = withTemporaryState(temp, () => countEnemyAttacks(r,c,owner));
+        const ownDef = withTemporaryState(temp, () => countOwnDefenders(r,c,owner,kingId));
+        const centerDist = Math.abs(3.5-r) + Math.abs(3.5-c);
+        let score = 80;
+        if(landOwner === owner) score += 28;
+        else if(!landOwner) score += 8;
+        else score -= hasKing(landOwner) ? 8 : 25;
+        if(hasGeneratorAt(r,c)) score += 8;
+        if(state.customGen[r][c]) score += 12;
+        score += ownDef * 3;
+        score -= enemyAttacks * 7;
+        score -= centerDist * .4;
+        score += Math.max(0, temp.players[owner].gold) * .22;
+
+        if(score > bestScore){
+          bestScore = score;
+          best = {r,c,score};
+        }
+      }
+    }
+
+    return best;
+  }
+
+  function findAiKingCoverDefenseAction(owner){
+    const threat = findEnemyKingCoverCaptureThreat(owner);
+    if(!threat) return null;
+
+    const king = state.pieces[threat.kingId];
+    if(!king || king.captured) return null;
+
+    const safeMove = findSafeKingMoveFromCoverThreat(owner, king.id);
+    if(safeMove){
+      return () => {
+        log(`${label(owner)} AI sees a double-move king-cover threat and moves its king out of danger.`);
+        executeMove(king.id, safeMove.move, false);
+      };
+    }
+
+    const teleport = findSafeKingTeleportSquare(owner, king.id);
+    if(teleport){
+      return () => {
+        log(`${label(owner)} AI buys King Teleport to escape a double-move king-cover threat.`);
+        teleportKing(owner, king.id, teleport.r, teleport.c);
+      };
+    }
+
+    const ps = state.players[owner];
+    const cost = landCostForPiece(king);
+    if(ps && ps.landPurchases < 2 && state.land[king.r][king.c] !== owner && (ps.freeLand || voluntaryAffordable(owner,cost))){
+      return () => {
+        log(`${label(owner)} AI buys land under its threatened king as last-resort insurance.`);
+        buyLand(owner, king.id);
+      };
+    }
+
+    return null;
+  }
+
+  function chooseAiCenterPressureAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || !hasKing(owner)) return null;
+
+    const style = getAiStyle(owner);
+    const moves = allMoves(owner, style).map(m => {
+      const p = state.pieces[m.pieceId];
+      const target = getPieceAt(m.move.r,m.move.c);
+      const ownDef = countOwnDefenders(m.move.r,m.move.c,owner,m.pieceId);
+      const enemyAtk = countEnemyAttacks(m.move.r,m.move.c,owner);
+      let pressure = m.score;
+
+      const onDefault = isDefaultGen(m.move.r,m.move.c);
+      const nearCenter = Math.abs(3.5-m.move.r) + Math.abs(3.5-m.move.c) <= 3;
+      const onXX = !!state.customGen[m.move.r]?.[m.move.c];
+
+      if(onDefault) pressure += 20;
+      if(onXX) pressure += 24;
+      if(nearCenter) pressure += 6;
+      if(target && target.owner === other(owner)){
+        pressure += (pieceValues[target.type] || 1) * 3;
+        if(onDefault || onXX) pressure += 18;
+      }
+
+      pressure += ownDef * 4.2;
+      if(ownDef >= 1 && (onDefault || onXX || nearCenter)) pressure += 7;
+      if(enemyAtk > ownDef) pressure -= (enemyAtk - ownDef) * 7;
+
+      if(p && !p.moved && ['N','B','Q','R'].includes(p.type) && nearCenter) pressure += 5;
+      if(p && p.type === 'P' && (onDefault || nearCenter)) pressure += pawnProgressFor(p, m.move.r) * 1.4;
+
+      return {...m, pressure};
+    }).filter(m => {
+      const target = getPieceAt(m.move.r,m.move.c);
+      const meaningful =
+        isDefaultGen(m.move.r,m.move.c) ||
+        !!state.customGen[m.move.r]?.[m.move.c] ||
+        (target && target.owner === other(owner)) ||
+        (Math.abs(3.5-m.move.r) + Math.abs(3.5-m.move.c) <= 3 && countOwnDefenders(m.move.r,m.move.c,owner,m.pieceId) > 0);
+      return meaningful && m.pressure > 26;
+    }).sort((a,b) => b.pressure - a.pressure);
+
+    const best = moves[0];
+    if(!best) return null;
+
+    return () => {
+      log(`${label(owner)} AI builds center pressure with support instead of drifting.`);
+      executeMove(best.pieceId, best.move, false);
+    };
   }
 
   function findAiKingCaptureCoverAction(owner, style=null){
@@ -3265,8 +3561,20 @@
     }
     if(state.customGen[mv.r][mv.c]) score += 8 + style.generatorFocus*4.2;
 
+    const ownDefenders = countOwnDefenders(mv.r,mv.c,p.owner,p.id);
+    const enemyAttackers = countEnemyAttacks(mv.r,mv.c,p.owner);
+    if(hasGeneratorAt(mv.r,mv.c) || state.customGen[mv.r][mv.c]){
+      score += ownDefenders * (3.2 + style.safety*.45);
+      if(ownDefenders >= 1) score += 4.5;
+      if(enemyAttackers > ownDefenders) score -= (enemyAttackers - ownDefenders) * (4.4 + style.safety);
+    }
+
     const centerDist = Math.abs(3.5-mv.r)+Math.abs(3.5-mv.c);
     score += (7-centerDist) * .45;
+    if(centerDist <= 3){
+      score += ownDefenders * 1.8;
+      if(['N','B','Q','R'].includes(p.type) && !p.moved) score += 3.5;
+    }
 
     if(p.type === 'P'){
       const end = pawnPromotionRow(p.owner);
@@ -3925,7 +4233,7 @@
     el('castleBtn').textContent = ps.castlingUsed ? 'Castling Used' : (ps.castlingRightsTurn != null ? 'Castling Rights Owned' : 'Buy Castling Rights (3g)');
     el('castleKingBtn').textContent = 'Castle Kingside (owned)';
     el('castleQueenBtn').textContent = 'Castle Queenside (owned)';
-    el('teleportBtn').textContent = state.mode === 'teleport' && state.modeOwner === owner ? '✖ Cancel King Teleport' : 'King Teleport (10g)';
+    el('teleportBtn').textContent = state.mode === 'teleport' && state.modeOwner === owner ? '✖ Cancel King Teleport' : (countKings(owner) > 1 ? 'King Teleport: select king (10g)' : 'King Teleport (10g)');
     el('resurrectBtn').textContent = 'Resurrect Last Capture (8g)';
     el('goldBarBtn').textContent = `Buy Gold Bar (100g)`;
   }
@@ -3962,9 +4270,9 @@
     const teleportActive = state.mode === 'teleport' && state.modeOwner === owner;
     const teleportBtn = el('teleportBtn');
     teleportBtn.disabled = !(localHumanTurn && (teleportActive || (canAct && hasKing(owner) && voluntaryAffordable(owner,10))));
-    teleportBtn.textContent = teleportActive ? '✖ Cancel King Teleport' : 'King Teleport (10g)';
+    teleportBtn.textContent = teleportActive ? '✖ Cancel King Teleport' : (countKings(owner) > 1 ? 'King Teleport: select king (10g)' : 'King Teleport (10g)');
     teleportBtn.classList.toggle('teleportActive', teleportActive);
-    teleportBtn.title = teleportActive ? 'Teleport targeting is active. Click a purple empty square, or click here to cancel.' : 'Spend 10 gold to teleport your king to any empty square. This uses your turn action after you choose the square.';
+    teleportBtn.title = teleportActive ? 'Teleport targeting is active. Click a purple empty square, or click here to cancel.' : (countKings(owner) > 1 ? 'You have multiple kings. Select the exact king first, then click this to teleport that king.' : 'Spend 10 gold to teleport your king to any empty square. This uses your turn action after you choose the square.');
     el('resurrectBtn').disabled = !(canSpendActionSlot && canResurrect(owner));
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
     const endBtn = el('endTurnBtn');
