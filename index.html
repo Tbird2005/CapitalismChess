@@ -326,7 +326,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v41</div>
+    <div class="versionBadge">Version v43</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -608,6 +608,7 @@
       modeOwner: null,
       pendingPromotion: null,
       pendingCardPlacement: null,
+      resurrectionBattles: {},
       autoPlayer: playerAutoEnabled,
       lastCapture: null,
       gameOver: false,
@@ -1241,7 +1242,8 @@
       ps.doubleMovesRemaining--;
       if(ps.doubleMovesRemaining > 0){
         state.selected = selectedPieceId;
-        state.legalMoves = [];
+        const selectedPiece = selectedPieceId ? state.pieces[selectedPieceId] : null;
+        state.legalMoves = selectedPiece && !selectedPiece.captured && selectedPiece.owner === owner ? legalMovesForPiece(selectedPiece) : [];
         state.status = `${label(owner)} has ${ps.doubleMovesRemaining} double action left.`;
         render();
         return;
@@ -1518,10 +1520,126 @@
     return voluntaryAffordable(owner,8);
   }
 
-  function resurrect(owner=PLAYER){
+  function recordResurrectionBattle(owner, r, c, resurrectedType, capturedType){
+    if(!state.resurrectionBattles) state.resurrectionBattles = {};
+    const k = key(r,c);
+    const old = state.resurrectionBattles[k];
+    const recent = old && (state.turnNumber - old.lastTurn <= 6);
+    const entry = recent ? old : {count:0};
+    entry.count = (entry.count || 0) + 1;
+    entry.lastTurn = state.turnNumber;
+    entry.lastOwner = owner;
+    entry.lastResurrected = resurrectedType;
+    entry.lastCaptured = capturedType;
+    state.resurrectionBattles[k] = entry;
+  }
+
+  function resurrectionBattleCountAt(r,c){
+    const entry = state.resurrectionBattles?.[key(r,c)];
+    if(!entry || state.turnNumber - entry.lastTurn > 6) return 0;
+    return entry.count || 0;
+  }
+
+  function squareOccupancyIncomeFor(owner, r, c){
+    let income = 0;
+
+    if(isDefaultGen(r,c) && !state.genChip?.[r]?.[c]){
+      income += 1;
+    }
+
+    if(state.customGen?.[r]?.[c]){
+      income += isDefaultGen(r,c) ? 6 : 5;
+    }
+
+    const landOwner = state.land?.[r]?.[c];
+    if(landOwner && landOwner !== owner){
+      income -= hasKing(landOwner) ? 1 : 6;
+    }
+
+    return income;
+  }
+
+  function aiPassiveIncomeExcludingSquare(owner, r, c){
+    let income = aiPassiveIncome(owner);
+    const occupant = getPieceAt(r,c);
+
+    // aiPassiveIncome already counts XX income for a piece physically parked on
+    // the square. Remove it so we can compare both sides as if each side takes
+    // control of that square during a resurrection loop.
+    if(occupant && occupant.owner === owner && state.customGen?.[r]?.[c]){
+      income -= isDefaultGen(r,c) ? 6 : 5;
+    }
+
+    return income;
+  }
+
+  function aiEstimatedLoopIncome(owner, r, c){
+    return aiPassiveIncomeExcludingSquare(owner, r, c) + squareOccupancyIncomeFor(owner, r, c);
+  }
+
+  function aiLoopProfitEdge(owner, r, c){
+    const enemy = other(owner);
+    return aiEstimatedLoopIncome(owner, r, c) - aiEstimatedLoopIncome(enemy, r, c);
+  }
+
+  function aiShouldAvoidResurrectionLoop(owner, cap){
+    const lc = state.lastCapture;
+    if(!lc || !lc.location || !cap || cap.type === 'K') return false;
+
+    const {r,c} = lc.location;
+    const enemy = other(owner);
+    const battleCount = resurrectionBattleCountAt(r,c);
+    const enemyCanCounter = !!state.players[enemy] && voluntaryAffordable(enemy,8);
+    const hotEconomySquare =
+      !!state.customGen?.[r]?.[c] ||
+      hasGeneratorAt(r,c) ||
+      state.genChip?.[r]?.[c] === enemy ||
+      state.land?.[r]?.[c] === enemy;
+
+    const repeatedResurrection = !!lc.byResurrection || battleCount >= 2;
+    if(!repeatedResurrection) return false;
+
+    const edge = aiLoopProfitEdge(owner, r, c);
+
+    // If the AI is the side actually profiting from the resurrection loop, let it
+    // keep doing it. The previous fix backed off too hard and missed profitable
+    // loops.
+    if(enemyCanCounter && edge >= 2){
+      log(`${label(owner)} AI keeps the resurrection loop at ${coord(r,c)} because its income edge is favorable.`);
+      return false;
+    }
+
+    // Otherwise, do not pay 8g over and over to feed the human a stronger
+    // economy loop.
+    if(enemyCanCounter && (hotEconomySquare || battleCount >= 3) && edge < 2){
+      log(`${label(owner)} AI avoids the resurrection loop at ${coord(r,c)} because the enemy is profiting from it.`);
+      return true;
+    }
+
+    return false;
+  }
+
+  function aiShouldResurrect(owner, cap){
+    if(!canResurrect(owner) || !cap) return false;
+
+    if(cap.type === 'K'){
+      return !hasKing(owner) || state.players[owner].gold > 10 || Math.random() < .92;
+    }
+
+    if(aiShouldAvoidResurrectionLoop(owner, cap)) return false;
+
+    const value = pieceValues[cap.type] || 0;
+    const gold = state.players[owner].gold;
+
+    if(value >= 5 && gold > 14) return true;
+    if(value >= 3 && gold > 18 && Math.random() < .45) return true;
+    return false;
+  }
+
+  function resurrect(owner=PLAYER, isHuman=false){
     if(!canResurrect(owner)) return false;
     const ps = state.players[owner];
-    if(ps.usedTurnAction || ps.doubleMovesRemaining) return false;
+    if(!hasActionSlot(owner)) return false;
     if(!transferGold(owner,BANK,8,'for piece resurrection')) return false;
 
     // Keep a reference to the resurrection claim before possibly creating a new
@@ -1552,6 +1670,7 @@
     lc.used = true;
 
     if(resurrectionCapture){
+      recordResurrectionBattle(owner, r, c, data.type, resurrectionCapture.type);
       state.lastCapture = {
         owner: resurrectionCapture.owner,
         captured: resurrectionCapture,
@@ -1563,9 +1682,9 @@
       };
     }
 
-    ps.usedTurnAction = true;
     log(`${label(owner)} resurrected ${data.type} on ${coord(r,c)}.`);
     purchaseSfx();
+    finishTurnAction(owner, isHuman, newId, `${label(owner)} resurrected ${data.type}. You may buy land, then end turn.`);
     return true;
   }
 
@@ -2055,16 +2174,7 @@
 
     if(canResurrect(owner)){
       const cap = state.lastCapture?.captured;
-      if(cap && cap.type === 'K'){
-        // A resurrected king is survival first and economy second. Even with
-        // extra kings alive, the AI almost always wants the king back unless the
-        // resurrection would leave it nearly broke.
-        if(!hasKing(owner) || state.players[owner].gold > 10 || Math.random() < .92){
-          return () => resurrect(owner);
-        }
-      }
-      if(cap && pieceValues[cap.type] >= 5 && state.players[owner].gold > 14) return () => resurrect(owner);
-      if(cap && pieceValues[cap.type] >= 3 && state.players[owner].gold > 18 && Math.random() < .45) return () => resurrect(owner);
+      if(aiShouldResurrect(owner, cap)) return () => resurrect(owner);
     }
 
     const freeKingPunish = findAiUnprotectedKingPunishAction(owner);
@@ -3339,7 +3449,7 @@
     teleportBtn.textContent = teleportActive ? '✖ Cancel King Teleport' : 'King Teleport (10g)';
     teleportBtn.classList.toggle('teleportActive', teleportActive);
     teleportBtn.title = teleportActive ? 'Teleport targeting is active. Click a purple empty square, or click here to cancel.' : 'Spend 10 gold to teleport your king to any empty square. This uses your turn action after you choose the square.';
-    el('resurrectBtn').disabled = !(canAct && canResurrect(owner));
+    el('resurrectBtn').disabled = !(canSpendActionSlot && canResurrect(owner));
     el('goldBarBtn').disabled = !(localHumanTurn && state.players[owner].gold >= 100);
     const endBtn = el('endTurnBtn');
     endBtn.disabled = !localHumanTurn;
@@ -3817,7 +3927,7 @@
     if(action === 'castleKing'){ castleNow(owner, 'king', true); return; }
     if(action === 'castleQueen'){ castleNow(owner, 'queen', true); return; }
     if(action === 'teleportMode'){ beginTeleport(owner); return; }
-    if(action === 'resurrect'){ resurrect(owner); return; }
+    if(action === 'resurrect'){ resurrect(owner, true); return; }
     if(action === 'goldBar'){ buyGoldBar(owner); return; }
     if(action === 'endTurn'){ endTurn(); return; }
     if(action === 'promote'){ finishPromotionForOwner(owner, payload.type || null, !!payload.paid); return; }
