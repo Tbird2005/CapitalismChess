@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v74</div>
+    <div class="versionBadge">Version v75</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -2520,15 +2520,15 @@
         return;
       }
 
-      const openingVarietyAction = chooseAiOpeningVarietyAction(owner);
-      if(openingVarietyAction){
-        runAiActionAndFinish(owner, openingVarietyAction);
-        return;
-      }
-
       const earlyGambitBookAction = chooseAiOpeningKingGambitAction(owner);
       if(earlyGambitBookAction){
         runAiActionAndFinish(owner, earlyGambitBookAction);
+        return;
+      }
+
+      const openingVarietyAction = chooseAiOpeningVarietyAction(owner);
+      if(openingVarietyAction){
+        runAiActionAndFinish(owner, openingVarietyAction);
         return;
       }
 
@@ -2884,8 +2884,13 @@
       // Diamond was wasting too much early money on this in the test logs, so the
       // bot now wants at least a small economy first.
       const style = getAiStyle(owner);
-      let chance = Math.min(.28, .08 + style.gambitChance * .55);
       const openingPlan = (typeof getAiOpeningPlan === 'function') ? getAiOpeningPlan(owner) : 'balanced';
+      if(openingPlan === 'kingGambit'){
+        ps.kingGambitPlan = true;
+        ps.kingGambitDraws = 0;
+        return true;
+      }
+      let chance = Math.min(.28, .08 + style.gambitChance * .55);
       if(openingPlan === 'knightStage' || openingPlan === 'balanced') chance += .05;
       if(!aiOpeningEconomyReady(owner)) chance *= .55;
       if(aiDefaultChipCount(owner) >= 1) chance += .025;
@@ -4676,6 +4681,35 @@
     return total;
   }
 
+  function aiHasUnclaimedDefaultGeneratorPlan(owner){
+    const style = getAiStyle(owner);
+
+    // Standing on an unclaimed default generator is the clearest buy.
+    if(livingPieces(owner).some(p => isDefaultGen(p.r,p.c) && !state.genChip?.[p.r]?.[p.c])){
+      return true;
+    }
+
+    // Or a safe move can reach an unclaimed default generator this turn.
+    for(const m of allMoves(owner, style)){
+      if(!isDefaultGen(m.move.r,m.move.c)) continue;
+      if(state.genChip?.[m.move.r]?.[m.move.c]) continue;
+
+      const p = state.pieces[m.pieceId];
+      if(!p) continue;
+      const target = getPieceAt(m.move.r,m.move.c);
+      if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,m.money,target)) continue;
+      if(aiMoveIsUnsupportedCenterBlunder(owner,p,m.move,m.money,target)) continue;
+
+      const ownDef = withTemporaryMove(p,m.move,() => countOwnDefenders(m.move.r,m.move.c,owner,p.id));
+      const enemyAtk = withTemporaryMove(p,m.move,() => countEnemyAttacks(m.move.r,m.move.c,owner));
+      if(p.type === 'P' || ownDef >= enemyAtk || state.land?.[m.move.r]?.[m.move.c] === owner){
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function chooseAiDefaultGeneratorChipInvestmentAction(owner){
     const ps = state.players[owner];
     if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
@@ -4683,6 +4717,9 @@
     const enemy = other(owner);
     const status = aiGeneratorGoalStatus(owner);
     const ownDefaultChips = aiDefaultChipCount(owner);
+    const enemyDefaultChips = aiDefaultChipCount(enemy);
+    const hasUnclaimedPlan = aiHasUnclaimedDefaultGeneratorPlan(owner);
+
     const targetChipGoal = status.enemyChips >= 2 || status.enemyIncome > status.ownIncome ? 3 : 2;
 
     const candidates = livingPieces(owner)
@@ -4690,33 +4727,53 @@
       .map(p => {
         const chip = state.genChip[p.r][p.c];
         const stealing = chip === enemy;
+        const unclaimed = !chip;
         const cost = stealing ? 8 : 5;
         const enemyAtk = countEnemyAttacks(p.r,p.c,owner);
         const ownDef = countOwnDefenders(p.r,p.c,owner,p.id);
         const land = state.land?.[p.r]?.[p.c];
 
-        let score = 42;
-        if(ownDefaultChips < 1) score += 42;
-        else if(ownDefaultChips < 2) score += 32;
-        else if(ownDefaultChips < targetChipGoal) score += 18;
+        let score = 0;
 
-        if(stealing) score += 34;        // enemy pays us back later if they retake it, but stealing is still a swing.
-        else score += 22;               // first owner pays 5 and may later receive 8 if enemy buys it out.
-        if(status.incomeBehind) score += 22;
-        if(status.generatorDeficit > 0) score += status.generatorDeficit * 10;
-        if(enemyAtk > ownDef) score += 10; // buy before being chased off.
+        if(unclaimed){
+          // This is the real "investment": first owner pays 5, collects income,
+          // and may later receive 8 if the enemy buys it out.
+          score += 58;
+          if(ownDefaultChips < 1) score += 42;
+          else if(ownDefaultChips < 2) score += 34;
+          else if(ownDefaultChips < targetChipGoal) score += 16;
+          if(status.incomeBehind) score += 18;
+          if(enemyAtk > ownDef) score += 10; // buy before being pushed off.
+          score -= cost * 1.05;
+        } else {
+          // Buying an enemy chip is NOT the same investment. It pays the enemy 8.
+          // Only do it when there is no good unclaimed generator plan or the enemy
+          // is snowballing so hard that stealing is needed.
+          score += 24;
+          const stealEmergency =
+            enemyDefaultChips >= ownDefaultChips + 2 ||
+            status.enemyIncome >= status.ownIncome + 3 ||
+            enemyDefaultChips >= 3;
+          if(hasUnclaimedPlan && !stealEmergency) score -= 95;
+          if(hasUnclaimedPlan && ownDefaultChips < 2) score -= 55;
+          if(stealEmergency) score += 34;
+          if(status.incomeBehind) score += 12;
+          if(enemyAtk > ownDef) score -= 8; // do not pay 8 just to get thrown off.
+          score -= cost * 2.35;
+        }
+
+        if(status.generatorDeficit > 0) score += status.generatorDeficit * (unclaimed ? 10 : 5);
         if(land === owner) score += 8;
         if(land === enemy) score -= hasKing(enemy) ? 2 : 8;
         if(p.type === 'P') score += 6;
         if(p.type === 'N') score += 4;
-        score -= cost * (ownDefaultChips < 2 ? 1.15 : 1.85);
         score += Math.random() * 1.5;
 
-        return {p,cost,score,stealing,ownDefaultChips};
+        return {p,cost,score,stealing,unclaimed,ownDefaultChips,enemyDefaultChips,hasUnclaimedPlan};
       })
       .filter(x => voluntaryAffordable(owner,x.cost))
       .filter(x => {
-        const reserve = x.ownDefaultChips < 2 ? 1 : Math.max(3, 5 + Math.max(0, getAiStyle(owner).reserveShift || 0));
+        const reserve = x.unclaimed && x.ownDefaultChips < 2 ? 1 : Math.max(3, 6 + Math.max(0, getAiStyle(owner).reserveShift || 0));
         return ps.gold - x.cost > reserve;
       })
       .sort((a,b)=>b.score-a.score);
@@ -4724,13 +4781,22 @@
     const best = candidates[0];
     if(!best) return null;
 
-    // Own at least two default generators when possible. After that, still buy
-    // when it is a steal, income catch-up, or a very cheap strong position.
-    const threshold = best.ownDefaultChips < 2 ? 38 : (best.stealing ? 50 : 62);
+    let threshold;
+    if(best.unclaimed){
+      threshold = best.ownDefaultChips < 2 ? 42 : 64;
+    } else {
+      const emergencySteal = best.enemyDefaultChips >= best.ownDefaultChips + 2 || status.enemyIncome >= status.ownIncome + 3;
+      threshold = emergencySteal && !best.hasUnclaimedPlan ? 56 : 86;
+    }
+
     if(best.score < threshold) return null;
 
     return () => {
-      log(`${label(owner)} AI buys generator ownership as an investment instead of only standing on the generator.`);
+      if(best.unclaimed){
+        log(`${label(owner)} AI buys the unclaimed generator chip first instead of starting a chip-ownership battle.`);
+      } else {
+        log(`${label(owner)} AI steals an enemy generator chip only because the income race demands it.`);
+      }
       buyGeneratorChip(owner, best.p.id, false);
     };
   }
@@ -4751,8 +4817,8 @@
     const needsXX =
       enemyIncome >= ownIncome + 2 ||
       enemyChips >= ownChips + 2 ||
-      (ownChips < 2 && ps.gold >= 36) ||
-      ps.gold >= 42;
+      (ownChips < 2 && ps.gold >= 34) ||
+      ps.gold >= 40;
 
     if(!needsXX) return null;
 
@@ -4819,8 +4885,8 @@
         const ownOcc = occ && occ.owner === owner;
         let score = 50;
 
-        if(!chip) score += 26;
-        if(chip === enemy) score += 38;
+        if(!chip) score += 44;
+        if(chip === enemy) score += 12;
         if(open) score += 10;
         if(enemyOcc){
           score += (pieceValues[occ.type] || 1) * 5;
@@ -4893,8 +4959,8 @@
       if(p.type === 'B') score += 10;
       if(p.type === 'R') score += 8;
       if(p.type === 'Q') score -= 28; // queen should not be the default expansion tool.
-      if(!t.chip) score += 18;
-      if(t.chip === enemy) score += 24;
+      if(!t.chip) score += 34;
+      if(t.chip === enemy) score += 6;
       if(ownDefAfter > 0) score += ownDefAfter * 9;
       if(enemyAtkAfter > ownDefAfter) score -= (enemyAtkAfter-ownDefAfter) * 18;
       score -= (m.move.cost || 0) * 4;
@@ -5769,11 +5835,12 @@
     if(!ps) return 'balanced';
     if(!ps.openingPlan){
       const roll = Math.random();
-      if(roll < .20) ps.openingPlan = 'instantChip';
-      else if(roll < .42) ps.openingPlan = 'queenPawn';
-      else if(roll < .64) ps.openingPlan = 'supportPawns';
-      else if(roll < .78) ps.openingPlan = 'knightStage';
-      else if(roll < .90) ps.openingPlan = 'wildPawns';
+      if(roll < .18) ps.openingPlan = 'instantChip';
+      else if(roll < .38) ps.openingPlan = 'queenPawn';
+      else if(roll < .58) ps.openingPlan = 'supportPawns';
+      else if(roll < .70) ps.openingPlan = 'knightStage';
+      else if(roll < .83) ps.openingPlan = 'wildPawns';
+      else if(roll < .90) ps.openingPlan = 'kingGambit';
       else ps.openingPlan = 'balanced';
       ps.openingPlanLockedTurn = state.turnNumber;
       log(`${label(owner)} AI opening plan: ${ps.openingPlan}.`);
@@ -6595,7 +6662,8 @@
         const p = state.pieces[m.pieceId];
         if(p && aiMoveIsUnsupportedCenterBlunder(owner, p, m.move, m.money, target)) return null;
         let score = m.score + 18;
-        if(stealing) score += 28;
+        if(stealing && aiHasUnclaimedDefaultGeneratorPlan(owner)) score -= 42;
+        if(stealing) score += 18;
         if(status.incomeBehind) score += 14;
         if(status.generatorDeficit > 0) score += status.generatorDeficit * 8;
         if(target && target.owner === other(owner)) score += (pieceValues[target.type] || 1) * 4;
