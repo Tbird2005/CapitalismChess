@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v75</div>
+    <div class="versionBadge">Version v77</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -1370,6 +1370,13 @@
     const current = state.land[p.r][p.c];
     if(current === owner) return false;
     const cost = !current ? 1 : (hasKing(current) ? 2 : 3);
+    if(shouldAutoAct(owner) && current && current === other(owner)){
+      const critical = p.type === 'K' || state.customGen?.[p.r]?.[p.c] || state.genChip?.[p.r]?.[p.c] === owner;
+      if(aiShouldAvoidPayingEnemyNearGoldBar(owner, cost) && !critical){
+        log(`${label(owner)} AI skips this enemy land buy only because it would hand over the 100-gold bar.`);
+        return false;
+      }
+    }
     if(ps.freeLand){
       ps.freeLand = false;
       state.land[p.r][p.c] = owner;
@@ -2372,6 +2379,30 @@
         return;
       }
 
+      const antiXXNormalFightAction = chooseAiAntiXXNormalFightAction(owner);
+      if(antiXXNormalFightAction){
+        runAiActionAndFinish(owner, antiXXNormalFightAction);
+        return;
+      }
+
+      const antiXXDiceAction = chooseAiGoldDiceAgainstEnemyXXAction(owner);
+      if(antiXXDiceAction){
+        runAiActionAndFinish(owner, antiXXDiceAction);
+        return;
+      }
+
+      const antiXXKingGambleAction = chooseAiAntiXXExtraKingGambleAction(owner);
+      if(antiXXKingGambleAction){
+        runAiActionAndFinish(owner, antiXXKingGambleAction);
+        return;
+      }
+
+      const goldBarRaceAction = chooseAiGoldBarRaceAction(owner);
+      if(goldBarRaceAction){
+        runAiActionAndFinish(owner, goldBarRaceAction);
+        return;
+      }
+
       // Emergency king recovery comes before land buying. Spending gold on land
       // while kingless can turn a recoverable position into a forced bankruptcy.
       const emergencyKingAction = chooseAiEmergencyKingAction(owner);
@@ -2403,6 +2434,24 @@
       const kinglessXXAction = chooseAiKinglessXXSurvivalAction(owner);
       if(kinglessXXAction){
         runAiActionAndFinish(owner, kinglessXXAction);
+        return;
+      }
+
+      const secondAntiXXNormalFightAction = chooseAiAntiXXNormalFightAction(owner);
+      if(secondAntiXXNormalFightAction){
+        runAiActionAndFinish(owner, secondAntiXXNormalFightAction);
+        return;
+      }
+
+      const secondAntiXXDiceAction = chooseAiGoldDiceAgainstEnemyXXAction(owner);
+      if(secondAntiXXDiceAction){
+        runAiActionAndFinish(owner, secondAntiXXDiceAction);
+        return;
+      }
+
+      const secondAntiXXKingGambleAction = chooseAiAntiXXExtraKingGambleAction(owner);
+      if(secondAntiXXKingGambleAction){
+        runAiActionAndFinish(owner, secondAntiXXKingGambleAction);
         return;
       }
 
@@ -4665,6 +4714,365 @@
 
   function mRandSmall(){ return Math.random() * 2; }
 
+  function aiGoldBarRaceStatus(owner){
+    const enemy = other(owner);
+    const ownGold = state.players?.[owner]?.gold ?? 0;
+    const enemyGold = state.players?.[enemy]?.gold ?? 0;
+    const ownProjected = projectedGoldAtNextTurnStart(state, owner);
+    const enemyProjected = projectedGoldAtNextTurnStart(state, enemy);
+    const enemyNear = enemyGold >= 88 || enemyProjected >= 96;
+    const enemyCritical = enemyGold >= 94 || enemyProjected >= 100;
+    const ownClose = ownGold >= 88 || ownProjected >= 96;
+    return {enemy, ownGold, enemyGold, ownProjected, enemyProjected, enemyNear, enemyCritical, ownClose};
+  }
+
+  function aiEnemyNearGoldBar(owner){
+    return aiGoldBarRaceStatus(owner).enemyNear;
+  }
+
+  function aiMoveNetEnemyGoldChange(owner, p, mv, money=null){
+    const enemy = other(owner);
+    const target = getPieceAt(mv.r,mv.c);
+    let change = 0;
+
+    if(target && target.owner === enemy){
+      change -= 1; // capture bounty drains enemy.
+    }
+
+    const landOwner = state.land?.[mv.r]?.[mv.c];
+    if(landOwner === enemy){
+      change += hasKing(enemy) ? 1 : 6;
+    }
+
+    return change;
+  }
+
+  function aiShouldAvoidPayingEnemyNearGoldBar(owner, amount){
+    const status = aiGoldBarRaceStatus(owner);
+    if(amount <= 0) return false;
+
+    // Do NOT treat "enemy is near 100" as an automatic reason to freeze.
+    // Buying land can stop repeated taxes, and stealing a chip can cut enemy
+    // income. Hard-block only when the payment itself likely hands them the
+    // 100g bar on their next action.
+    if(status.enemyGold + amount >= 100) return true;
+    if(amount >= 8 && status.enemyProjected + amount >= 102 && status.ownProjected < 100) return true;
+    return false;
+  }
+
+  function aiEnemyActiveXXSquares(owner){
+    const enemy = other(owner);
+    const out = [];
+    for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
+      if(!state.customGen?.[r]?.[c]) continue;
+      const occ = getPieceAt(r,c);
+      const builtByEnemy = state.customGen[r][c] === enemy;
+      const chipEnemy = state.genChip?.[r]?.[c] === enemy;
+      const enemyOccupies = occ && occ.owner === enemy;
+      if(!builtByEnemy && !chipEnemy && !enemyOccupies) continue;
+
+      const income = isDefaultGen(r,c) ? 6 : 5;
+      let score = 70 + income * 10;
+      if(enemyOccupies) score += (pieceValues[occ.type] || 1) * 7 + 20;
+      if(builtByEnemy) score += 14;
+      if(chipEnemy) score += 14;
+      if(state.land?.[r]?.[c] === enemy) score += 8;
+      if(state.land?.[r]?.[c] === owner) score += 8;
+      out.push({r,c,occ,income,builtByEnemy,chipEnemy,enemyOccupies,score});
+    }
+    out.sort((a,b)=>b.score-a.score);
+    return out;
+  }
+
+  function aiEnemyActiveXXIncome(owner){
+    return aiEnemyActiveXXSquares(owner)
+      .filter(x => x.enemyOccupies)
+      .reduce((sum,x)=>sum+x.income,0);
+  }
+
+  function aiOwnActiveXXIncome(owner){
+    let total = 0;
+    for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
+      if(!state.customGen?.[r]?.[c]) continue;
+      const occ = getPieceAt(r,c);
+      if(occ && occ.owner === owner) total += isDefaultGen(r,c) ? 6 : 5;
+    }
+    return total;
+  }
+
+  function chooseAiAntiXXNormalFightAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || !hasKing(owner)) return null;
+
+    const enemy = other(owner);
+    const xx = aiEnemyActiveXXSquares(owner);
+    if(!xx.length) return null;
+
+    const enemyXXIncome = aiEnemyActiveXXIncome(owner);
+    const ownXXIncome = aiOwnActiveXXIncome(owner);
+    const status = aiGeneratorGoalStatus(owner);
+    const mustFight = enemyXXIncome >= 5 || status.enemyIncome >= status.ownIncome + 3 || aiGoldBarRaceStatus(owner).enemyNear;
+    if(!mustFight) return null;
+
+    // If already standing on an enemy XX, buy the chip if it does not literally
+    // hand over the 100g bar. This is a real strategic chip steal, not a random
+    // middle chip battle.
+    const standing = livingPieces(owner)
+      .filter(p => xx.some(x => x.r === p.r && x.c === p.c) && state.genChip?.[p.r]?.[p.c] !== owner)
+      .map(p => {
+        const cost = state.genChip[p.r][p.c] === enemy ? 8 : 5;
+        let score = 92 - cost * 2;
+        if(state.genChip[p.r][p.c] === enemy) score += 24;
+        if(state.land?.[p.r]?.[p.c] === owner) score += 8;
+        if(enemyXXIncome > ownXXIncome) score += 20;
+        return {p,cost,score};
+      })
+      .filter(x => voluntaryAffordable(owner,x.cost) && !aiShouldAvoidPayingEnemyNearGoldBar(owner,x.cost))
+      .sort((a,b)=>b.score-a.score)[0];
+
+    if(standing && standing.score >= 70){
+      return () => {
+        log(`${label(owner)} AI fights the enemy XX by buying the XX chip it is standing on.`);
+        buyGeneratorChip(owner, standing.p.id, false);
+      };
+    }
+
+    // Direct capture/move onto enemy XX.
+    let direct = null;
+    let directScore = -99999;
+    for(const m of allMoves(owner, getAiStyle(owner))){
+      const s = xx.find(x => x.r === m.move.r && x.c === m.move.c);
+      if(!s) continue;
+      const p = state.pieces[m.pieceId];
+      const target = getPieceAt(m.move.r,m.move.c);
+      if(!p) continue;
+      if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,m.money,target)) continue;
+      if(aiMoveIsUnsupportedCenterBlunder(owner,p,m.move,m.money,target)) continue;
+
+      let score = s.score + m.score * .35;
+      if(target && target.owner === enemy) score += (pieceValues[target.type] || 1) * 10 + 18;
+      if(target && target.owner === enemy && target.type === 'R') score += 22;
+      if(target && target.owner === enemy && target.type === 'Q') score += 34;
+      if(state.land?.[m.move.r]?.[m.move.c] === owner) score += 10;
+      score -= (m.move.cost || 0) * 4;
+
+      if(score > directScore){
+        directScore = score;
+        direct = {...m, score, xx:s};
+      }
+    }
+
+    if(direct && directScore >= 92){
+      return () => {
+        log(`${label(owner)} AI attacks the enemy XX generator instead of playing normal middle chip games.`);
+        executeMove(direct.pieceId, direct.move, false);
+        if(!state.gameOver) aiMaybeBuyLandUnderPiece(owner, direct.pieceId, true);
+      };
+    }
+
+    // Double move onto XX and buy chip if possible.
+    if(voluntaryAffordable(owner,6) && ps.gold > 16){
+      let bestDouble = null;
+      let bestScore = -99999;
+      for(const m of allMoves(owner, getAiStyle(owner))){
+        const s = xx.find(x => x.r === m.move.r && x.c === m.move.c);
+        if(!s) continue;
+        const p = state.pieces[m.pieceId];
+        const target = getPieceAt(m.move.r,m.move.c);
+        if(!p) continue;
+        if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,m.money,target)) continue;
+
+        const chipCost = state.genChip[m.move.r][m.move.c] === enemy ? 8 : 5;
+        if(aiShouldAvoidPayingEnemyNearGoldBar(owner, chipCost)) continue;
+        const roughAfter = ps.gold - 6 - (m.move.cost || 0) - chipCost;
+        if(roughAfter <= 2) continue;
+
+        let score = s.score + 45 + m.score * .25;
+        if(target && target.owner === enemy) score += (pieceValues[target.type] || 1) * 9;
+        score -= chipCost * 1.7;
+        score -= (m.move.cost || 0) * 4;
+
+        if(score > bestScore){
+          bestScore = score;
+          bestDouble = {...m, xx:s, chipCost, score};
+        }
+      }
+
+      if(bestDouble && bestScore >= 116){
+        return () => ({
+          aiSteps:[
+            () => {
+              log(`${label(owner)} AI uses Double Move to invade the enemy XX and buy the chip.`);
+              buyDoubleMove(owner);
+            },
+            () => executeMove(bestDouble.pieceId, bestDouble.move, false),
+            () => {
+              const p = state.pieces[bestDouble.pieceId];
+              if(p && !p.captured && p.owner === owner && hasGeneratorAt(p.r,p.c) && state.genChip[p.r][p.c] !== owner){
+                buyGeneratorChip(owner, p.id, false);
+              }
+            }
+          ]
+        });
+      }
+    }
+
+    return null;
+  }
+
+  function chooseAiGoldDiceAgainstEnemyXXAction(owner){
+    const ps = state.players[owner];
+    if(!ps || ps.usedTurnAction || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(!voluntaryAffordable(owner,15)) return null;
+
+    const enemy = other(owner);
+    const xx = aiEnemyActiveXXSquares(owner).filter(x => x.enemyOccupies && x.occ);
+    if(!xx.length) return null;
+
+    const byFace = {};
+    for(const x of xx){
+      const t = x.occ.type;
+      if(t === 'K') continue; // dice cannot roll kings.
+      byFace[t] = (byFace[t] || 0) + x.income;
+    }
+
+    const bestFace = Object.entries(byFace)
+      .map(([face,income]) => ({...estimateGoldDiceFace(owner, face), xxIncome:income}))
+      .sort((a,b)=>(b.xxIncome*18 + b.score) - (a.xxIncome*18 + a.score))[0];
+
+    if(!bestFace) return null;
+
+    const ownIncome = aiPassiveIncome(owner) + aiOwnActiveXXIncome(owner);
+    const enemyIncome = aiPassiveIncome(enemy) + aiEnemyActiveXXIncome(owner);
+    const desperate = enemyIncome >= ownIncome + 6 || aiGoldBarRaceStatus(owner).enemyNear;
+    const strongRookCase = bestFace.face === 'R' && bestFace.xxIncome >= 10;
+    const strongAnyCase = bestFace.xxIncome >= 5 && bestFace.score >= 58;
+
+    if(!desperate && !strongRookCase && !strongAnyCase) return null;
+    if(ps.gold - 15 <= (desperate ? 3 : 7)) return null;
+
+    const chance = strongRookCase ? .34 : desperate ? .24 : .14;
+    if(Math.random() > chance) return null;
+
+    return () => {
+      log(`${label(owner)} AI gambles Gold Dice because the enemy XX setup makes one dice face game-changing.`);
+      goldDice(owner);
+    };
+  }
+
+  function chooseAiAntiXXExtraKingGambleAction(owner){
+    const ps = state.players[owner];
+    if(!ps || ps.usedTurnAction || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(!canDrawPieceCard(owner)) return null;
+
+    const enemyXX = aiEnemyActiveXXIncome(owner);
+    const ownXX = aiOwnActiveXXIncome(owner);
+    if(enemyXX < 5 || ownXX >= enemyXX) return null;
+
+    const status = aiGeneratorGoalStatus(owner);
+    const behind = aiPassiveIncome(other(owner)) + enemyXX >= aiPassiveIncome(owner) + ownXX + 5;
+    if(!behind && !aiGoldBarRaceStatus(owner).enemyNear) return null;
+
+    // A king card costs 5 and produces the same +5 income as an XX generator.
+    // It is still random, so use it as a rare/desperate answer to enemy XX.
+    if(voluntaryAffordable(owner,6) && ps.gold > 24 && openBackRankSlots(owner).length >= 2 && Math.random() < .22){
+      return () => ({
+        aiSteps:[
+          () => {
+            log(`${label(owner)} AI takes a two-card extra-king gamble to answer enemy XX income.`);
+            buyDoubleMove(owner);
+          },
+          () => drawCard(owner),
+          () => { if(canDrawPieceCard(owner)) drawCard(owner); }
+        ]
+      });
+    }
+
+    if(ps.gold > 12 && Math.random() < .30){
+      return () => {
+        log(`${label(owner)} AI gambles for an extra king because enemy XX income is running away.`);
+        drawCard(owner);
+      };
+    }
+
+    return null;
+  }
+
+  function chooseAiGoldBarRaceAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || state.gameOver) return null;
+
+    const status = aiGoldBarRaceStatus(owner);
+    const enemy = status.enemy;
+    if(!status.enemyNear) return null;
+
+    const style = getAiStyle(owner);
+
+    // 1. If the enemy is close to 100, captures are the cleanest answer:
+    // they pay us and subtract 1 from the enemy without handing them 8g.
+    let bestCapture = null;
+    let bestScore = -99999;
+    for(const m of allMoves(owner, style)){
+      const p = state.pieces[m.pieceId];
+      const target = getPieceAt(m.move.r,m.move.c);
+      if(!p || !target || target.owner !== enemy) continue;
+      if(m.money?.bankruptsSelf) continue;
+
+      const enemyChange = aiMoveNetEnemyGoldChange(owner, p, m.move, m.money);
+      if(enemyChange > 0 && status.enemyGold + enemyChange >= 96) continue;
+      if(aiMoveLeavesDangerousTurnTax(owner, m.money, target)) continue;
+
+      let score = 80 + (pieceValues[target.type] || 1) * 16;
+      if(target.type === 'K') score += 140;
+      if(target.type === 'Q') score += 48;
+      if(target.type === 'R') score += 24;
+      score -= Math.max(0, enemyChange) * 60;
+      score -= (m.move.cost || 0) * 5;
+      score += (m.money?.captureGain || 0) * 18;
+      score += Math.max(0, (m.money?.afterGold || 0) - ps.gold) * .5;
+
+      if(score > bestScore){
+        bestScore = score;
+        bestCapture = {...m, score, targetType:target.type, targetCoord:coord(target.r,target.c)};
+      }
+    }
+
+    if(bestCapture && (bestCapture.targetType === 'K' || bestCapture.targetType === 'Q' || bestCapture.targetType === 'R' || bestScore >= 105)){
+      return () => {
+        log(`${label(owner)} AI is in gold-bar race mode and takes a real capture, not just a 1g poke.`);
+        executeMove(bestCapture.pieceId, bestCapture.move, false);
+      };
+    }
+
+    // 2. If we can create a new XX income engine without paying the enemy, do it.
+    const xx = chooseAiCatchupXXBuildAction(owner);
+    if(xx) return xx;
+
+    // 3. Buy a chip only if it does not pay the enemy. First-owner unclaimed chip
+    // is still good. Paying 8 to a near-100 opponent is not.
+    const freeChip = livingPieces(owner)
+      .filter(p => isDefaultGen(p.r,p.c) && !state.genChip?.[p.r]?.[p.c])
+      .map(p => {
+        let score = 55;
+        if(state.land?.[p.r]?.[p.c] === owner) score += 8;
+        score += (pieceValues[p.type] || 1);
+        return {p, score};
+      })
+      .filter(x => voluntaryAffordable(owner,5) && ps.gold - 5 > 1)
+      .sort((a,b)=>b.score-a.score)[0];
+
+    if(freeChip){
+      return () => {
+        log(`${label(owner)} AI buys an unclaimed chip during the gold-bar race without paying the enemy.`);
+        buyGeneratorChip(owner, freeChip.p.id, false);
+      };
+    }
+
+    // 4. Do not passively sit there. If nothing clean exists, fall through to
+    // normal AI so it can defend generators, build XX, or make a real move.
+    return null;
+  }
+
   function aiDefaultChipCount(owner){
     let total = 0;
     for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
@@ -4747,6 +5155,8 @@
           score -= cost * 1.05;
         } else {
           // Buying an enemy chip is NOT the same investment. It pays the enemy 8.
+          // If the enemy is near a 100-gold bar, this can literally hand them the win.
+          if(aiShouldAvoidPayingEnemyNearGoldBar(owner, 8)) score -= 220;
           // Only do it when there is no good unclaimed generator plan or the enemy
           // is snowballing so hard that stealing is needed.
           score += 24;
@@ -4785,6 +5195,7 @@
     if(best.unclaimed){
       threshold = best.ownDefaultChips < 2 ? 42 : 64;
     } else {
+      if(aiShouldAvoidPayingEnemyNearGoldBar(owner, 8)) return null;
       const emergencySteal = best.enemyDefaultChips >= best.ownDefaultChips + 2 || status.enemyIncome >= status.ownIncome + 3;
       threshold = emergencySteal && !best.hasUnclaimedPlan ? 56 : 86;
     }
@@ -4814,10 +5225,12 @@
     const ownChips = aiDefaultChipCount(owner);
     const enemyChips = aiDefaultChipCount(enemy);
 
+    const race = aiGoldBarRaceStatus(owner);
     const needsXX =
       enemyIncome >= ownIncome + 2 ||
       enemyChips >= ownChips + 2 ||
       (ownChips < 2 && ps.gold >= 34) ||
+      race.enemyNear ||
       ps.gold >= 40;
 
     if(!needsXX) return null;
@@ -4846,6 +5259,7 @@
 
     let threshold = 10;
     if(enemyIncome >= ownIncome + 4) threshold -= 4;
+    if(race.enemyNear) threshold -= 5;
     if(ps.gold >= 38) threshold -= 2;
     if(p.type === 'K') threshold -= 3;
     if(isUnmovedCornerRook(p)) threshold -= 2;
@@ -4912,6 +5326,8 @@
 
     const style = getAiStyle(owner);
     const enemy = other(owner);
+    const raceStatus = aiGoldBarRaceStatus(owner);
+    if(raceStatus.ownGold >= 88 && !raceStatus.enemyCritical) return null;
     const targets = aiOpenGeneratorTargets(owner);
     if(!targets.length) return null;
 
@@ -6629,6 +7045,7 @@
         const stealing = chip === other(owner);
         const isXX = !!state.customGen[p.r]?.[p.c];
         const cost = stealing ? 8 : 5;
+        if(stealing && aiShouldAvoidPayingEnemyNearGoldBar(owner, 8)) return null;
         let score = isXX ? 58 : 40;
         if(stealing) score += isXX ? 44 : 34;       // stealing is a 2 income swing, bigger on XX fights
         else score += isXX ? 28 : 18;
@@ -6643,6 +7060,7 @@
         score += Math.random() * 1.5;
         return {p,cost,score,stealing};
       })
+      .filter(Boolean)
       .filter(x => voluntaryAffordable(owner, x.cost) && ps.gold - x.cost > reserve)
       .sort((a,b) => b.score - a.score)[0];
 
@@ -6837,6 +7255,17 @@
     if(state.land[p.r][p.c] === owner) return false;
     const important = force || hasGeneratorAt(p.r,p.c) || !!state.customGen[p.r][p.c] || state.land[p.r][p.c] === other(owner);
     if(!important) return false;
+
+    const current = state.land[p.r]?.[p.c];
+    if(current === other(owner)){
+      const cost = landCostForPiece(p);
+      const trulyCritical = p.type === 'K' || state.customGen?.[p.r]?.[p.c] || state.genChip?.[p.r]?.[p.c] === owner;
+      if(aiShouldAvoidPayingEnemyNearGoldBar(owner, cost) && !trulyCritical){
+        log(`${label(owner)} AI refuses only this enemy land buy because it would hand over the 100-gold bar.`);
+        return false;
+      }
+    }
+
     return buyLand(owner, p.id);
   }
 
@@ -7527,6 +7956,11 @@
     score += money.captureGain * 4.5;
     score += money.genGain * (1.45 + style.generatorFocus*.65);
     score -= money.taxPaid * (3.6 + style.costFear*.85);
+    const enemyRace = aiGoldBarRaceStatus(p.owner);
+    const netEnemyGoldChange = aiMoveNetEnemyGoldChange(p.owner, p, mv, money);
+    if(enemyRace.enemyNear && netEnemyGoldChange > 0 && !money.winsImmediately){
+      score -= netEnemyGoldChange * (enemyRace.enemyCritical ? 85 : 48);
+    }
     const futureTax = money.futureTurnTax || 0;
     if(futureTax){
       const escapeCost = Number.isFinite(money.futureTaxEscapeCost) ? money.futureTaxEscapeCost : 999;
@@ -7947,7 +8381,11 @@
         if(chipOwner === enemy) enemyChipGenCount++;
       }
       if(state.customGen?.[p.r]?.[p.c]){
-        genGain += isDefaultGen(p.r,p.c) ? 6 : 5;
+        const xxGain = isDefaultGen(p.r,p.c) ? 6 : 5;
+        genGain += xxGain;
+        if(state.customGen[p.r][p.c] === enemy || state.genChip?.[p.r]?.[p.c] === enemy){
+          enemyChipGenCount += 2; // dice stealing a piece off enemy XX is bigger than normal generator play.
+        }
       }
     }
 
