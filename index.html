@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v72</div>
+    <div class="versionBadge">Version v73</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -2406,6 +2406,12 @@
         return;
       }
 
+      const earlyExpansionAction = chooseAiExpandOpenGeneratorAction(owner);
+      if(earlyExpansionAction && !findAnyKingLineThreat(owner)){
+        runAiActionAndFinish(owner, earlyExpansionAction);
+        return;
+      }
+
       const kingCoverDefenseAction = findAiKingCoverDefenseAction(owner);
       if(kingCoverDefenseAction){
         runAiActionAndFinish(owner, kingCoverDefenseAction);
@@ -2415,6 +2421,12 @@
       const kingCoverCaptureAction = findAiKingCaptureCoverAction(owner, getAiStyle(owner));
       if(kingCoverCaptureAction){
         runAiActionAndFinish(owner, kingCoverCaptureAction);
+        return;
+      }
+
+      const generatorExpansionAction = chooseAiExpandOpenGeneratorAction(owner);
+      if(generatorExpansionAction){
+        runAiActionAndFinish(owner, generatorExpansionAction);
         return;
       }
 
@@ -3573,7 +3585,11 @@
     const xxInsurance = aiKinglessXXInsurance(owner);
     const canTolerateKingLoss = xxInsurance && xxInsurance.offsetsPenalty && !xxInsurance.underAttack && ps?.gold <= 24;
 
-    const landTrap = !canTolerateKingLoss ? findAiLandTaxTrapDefense(owner, threat) : null;
+    const possibleExpansion = chooseAiExpandOpenGeneratorAction(owner);
+    const lineThreat = findAnyKingLineThreat(owner);
+    const landTrap = (!canTolerateKingLoss && !possibleExpansion) || (lineThreat && lineThreat.kind === 'direct')
+      ? findAiLandTaxTrapDefense(owner, threat)
+      : null;
     if(landTrap){
       return () => ({
         aiSteps:[
@@ -4329,6 +4345,9 @@
         if(target.type === 'R') score += 30;
         if(target.type === 'B' || target.type === 'N') score += 13;
         if(onGen) score += 22;
+        if(state.genChip?.[target.r]?.[target.c] === owner && targetValue <= 3 && target.type !== 'N' && target.type !== 'B'){
+          score -= 38; // we already own that income. Do not waste the whole plan chasing a pawn there.
+        }
 
         if(enemyRecaptures === 0) score += 18;
         else if(ownDefenders >= enemyRecaptures) score += 8;
@@ -4604,6 +4623,166 @@
 
   function mRandSmall(){ return Math.random() * 2; }
 
+  function aiOpenGeneratorTargets(owner){
+    const enemy = other(owner);
+    const out = [];
+
+    for(let r=0;r<SIZE;r++){
+      for(let c=0;c<SIZE;c++){
+        if(!isDefaultGen(r,c)) continue;
+        const chip = state.genChip?.[r]?.[c];
+        if(chip === owner) continue; // already making money here. Do not obsess over the enemy standing on it.
+
+        const occ = getPieceAt(r,c);
+        const open = !occ;
+        const enemyOcc = occ && occ.owner === enemy;
+        const ownOcc = occ && occ.owner === owner;
+        let score = 50;
+
+        if(!chip) score += 26;
+        if(chip === enemy) score += 38;
+        if(open) score += 10;
+        if(enemyOcc){
+          score += (pieceValues[occ.type] || 1) * 5;
+          // If it is our chip, this function would have skipped it. If it is an
+          // unclaimed/enemy chip then contesting matters.
+        }
+        if(ownOcc) score += 18;
+        if(state.land?.[r]?.[c] === owner) score += 8;
+        if(state.land?.[r]?.[c] === enemy) score += 6;
+        score += Math.max(0, 4 - (Math.abs(3.5-r)+Math.abs(3.5-c))) * 2;
+
+        out.push({r,c,chip,occ,open,enemyOcc,ownOcc,score});
+      }
+    }
+
+    out.sort((a,b)=>b.score-a.score);
+    return out;
+  }
+
+  function chooseAiExpandOpenGeneratorAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+
+    const style = getAiStyle(owner);
+    const enemy = other(owner);
+    const targets = aiOpenGeneratorTargets(owner);
+    if(!targets.length) return null;
+
+    const status = aiGeneratorGoalStatus(owner);
+    const alreadyHasBase = status.ownIncome >= 1 || status.ownChips >= 1 || state.players[owner].gold >= 18;
+    if(!alreadyHasBase && state.turnNumber > 8) return null;
+
+    // If the enemy is standing on a generator chip we already own, ignore it
+    // unless it is high-value material or they can steal it immediately. The AI
+    // was wasting turns "stopping" pieces while still earning that chip income.
+    const enemyOnOurChip = [];
+    for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
+      if(state.genChip?.[r]?.[c] !== owner) continue;
+      const occ = getPieceAt(r,c);
+      if(occ && occ.owner === enemy) enemyOnOurChip.push(occ);
+    }
+    const urgentOwnChipInvader = enemyOnOurChip.some(p => (pieceValues[p.type] || 1) >= 5 || state.players[enemy]?.gold >= 8 && countEnemyAttacks(p.r,p.c,owner) > countOwnDefenders(p.r,p.c,owner,p.id));
+    const expansionBonus = enemyOnOurChip.length && !urgentOwnChipInvader ? 18 : 0;
+
+    // A: If a safe normal move can occupy an unclaimed/enemy generator, do it.
+    let bestMove = null;
+    let bestMoveScore = -99999;
+    for(const m of allMoves(owner, style)){
+      const t = targets.find(x => x.r === m.move.r && x.c === m.move.c);
+      if(!t) continue;
+
+      const p = state.pieces[m.pieceId];
+      if(!p) continue;
+      const target = getPieceAt(m.move.r,m.move.c);
+
+      if(aiMoveIsUnsupportedCenterBlunder(owner,p,m.move,m.money,target)) continue;
+      if(aiMoveAbandonsHeldGeneratorBlunder(owner,p,m.move,m.money,target)) continue;
+      if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,m.money,target)) continue;
+
+      const ownDefAfter = withTemporaryMove(p,m.move,() => countOwnDefenders(t.r,t.c,owner,p.id));
+      const enemyAtkAfter = withTemporaryMove(p,m.move,() => countEnemyAttacks(t.r,t.c,owner));
+      const safeEnough = p.type === 'P' || ownDefAfter >= enemyAtkAfter || state.land?.[t.r]?.[t.c] === owner;
+
+      // Do not throw a bishop/rook/queen into a generator for 1 coin.
+      if(!safeEnough && (pieceValues[p.type] || 1) >= 3) continue;
+
+      let score = t.score + m.score * .28 + expansionBonus;
+      if(p.type === 'P') score += 24;
+      if(p.type === 'N') score += 14;
+      if(p.type === 'B') score += 10;
+      if(p.type === 'R') score += 8;
+      if(p.type === 'Q') score -= 28; // queen should not be the default expansion tool.
+      if(!t.chip) score += 18;
+      if(t.chip === enemy) score += 24;
+      if(ownDefAfter > 0) score += ownDefAfter * 9;
+      if(enemyAtkAfter > ownDefAfter) score -= (enemyAtkAfter-ownDefAfter) * 18;
+      score -= (m.move.cost || 0) * 4;
+      if(status.incomeBehind) score += 18;
+      if(status.ownIncome >= status.enemyIncome + 2 && !t.chip) score -= 6;
+
+      if(score > bestMoveScore){
+        bestMoveScore = score;
+        bestMove = {...m, score, target:t, pieceType:p.type};
+      }
+    }
+
+    if(bestMove && bestMoveScore >= 58){
+      return () => {
+        log(`${label(owner)} AI expands to an open generator instead of overreacting to a square it already owns.`);
+        executeMove(bestMove.pieceId, bestMove.move, false);
+        if(!state.gameOver){
+          const p = state.pieces[bestMove.pieceId];
+          if(p && !p.captured && p.owner === owner && ps.landPurchases < 2 && state.land[p.r][p.c] !== owner){
+            const cost = landCostForPiece(p);
+            if(ps.freeLand || voluntaryAffordable(owner,cost)) buyLand(owner,p.id);
+          }
+        }
+      };
+    }
+
+    // B: If it cannot safely occupy yet, develop a defender/attacker toward the
+    // open generator. Prefer pawns, knights, bishops, and rooks. Avoid queen shuffling.
+    let bestSupport = null;
+    let bestSupportScore = -99999;
+    for(const t of targets.slice(0,4)){
+      const before = countEnemyAttacks(t.r,t.c,enemy); // our attacks on target square
+      for(const m of allMoves(owner, style)){
+        const p = state.pieces[m.pieceId];
+        if(!p || p.type === 'Q') continue;
+        if(m.move.r === t.r && m.move.c === t.c) continue;
+        if(m.money?.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,m.money,getPieceAt(m.move.r,m.move.c))) continue;
+        if(aiMoveAbandonsHeldGeneratorBlunder(owner,p,m.move,m.money,getPieceAt(m.move.r,m.move.c))) continue;
+
+        const after = withTemporaryMove(p,m.move,() => countEnemyAttacks(t.r,t.c,enemy));
+        if(after <= before) continue;
+
+        let score = 34 + t.score * .35 + (after-before) * 24 + expansionBonus;
+        if(p.type === 'P') score += 20;
+        if(p.type === 'N') score += 18;
+        if(p.type === 'B') score += 14;
+        if(p.type === 'R') score += 18;
+        if(state.land?.[m.move.r]?.[m.move.c] === owner) score += 6;
+        score -= (m.move.cost || 0) * 4;
+        if(status.incomeBehind) score += 12;
+
+        if(score > bestSupportScore){
+          bestSupportScore = score;
+          bestSupport = {...m, score, target:t, pieceType:p.type};
+        }
+      }
+    }
+
+    if(bestSupport && bestSupportScore >= 60){
+      return () => {
+        log(`${label(owner)} AI develops ${bestSupport.pieceType} pressure toward the open generator at ${coord(bestSupport.target.r,bestSupport.target.c)}.`);
+        executeMove(bestSupport.pieceId, bestSupport.move, false);
+      };
+    }
+
+    return null;
+  }
+
   function aiHeldGeneratorPieces(owner){
     return livingPieces(owner)
       .filter(p => hasGeneratorAt(p.r,p.c) || !!state.customGen?.[p.r]?.[p.c])
@@ -4721,6 +4900,7 @@
     let bestScore = -99999;
 
     for(const p of livingPieces(owner).filter(x => ['N','B','R','Q'].includes(x.type))){
+      if(p.type === 'Q' && state.turnNumber < 46 && aiPassiveIncome(owner) >= aiPassiveIncome(other(owner)) - 1) continue;
       for(const mv of legalMovesForPiece(p)){
         if(mv.capture) continue;
 
@@ -4752,7 +4932,7 @@
         if(p.type === 'R') score += 24;   // rooks were too asleep.
         if(p.type === 'N') score += 10;
         if(p.type === 'B') score += 8;
-        if(p.type === 'Q') score -= 6;    // queen is already overactive in these logs.
+        if(p.type === 'Q') score -= 42;   // queen was over-shuffling instead of developing real support.
 
         if(!p.moved) score += p.type === 'R' ? 18 : 7;
         if(state.land?.[mv.r]?.[mv.c] === owner) score += 8;
