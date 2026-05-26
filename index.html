@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Capitalism Chess Online</title>
+<title>Capitalism Chess Online v81 AI Brain Fix</title>
 <style>
   :root{
     --bg:#101319;
@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v80</div>
+    <div class="versionBadge">Version v81 AI Brain Fix</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -792,6 +792,8 @@
       pawnSupportBookUses:0,
       wildPawnBookUses:0,
       backRankDevelopUses:0,
+      aiSupportCooldownUntil:0,
+      aiRookActivationUses:0,
       aiLastPieceMove:null,
       aiTemper:null,
       aiLastStyle:null
@@ -2459,6 +2461,12 @@
         return;
       }
 
+      const earlyRookActivationAction = chooseAiRookActivationAction(owner);
+      if(earlyRookActivationAction && !findAnyKingLineThreat(owner)){
+        runAiActionAndFinish(owner, earlyRookActivationAction);
+        return;
+      }
+
       const castleDevelopmentAction = chooseAiCastleDevelopmentAction(owner);
       if(castleDevelopmentAction && !findAnyKingLineThreat(owner)){
         runAiActionAndFinish(owner, castleDevelopmentAction);
@@ -2939,6 +2947,28 @@
       ps._styleCache = buildAiStyle(owner);
     }
     return ps._styleCache;
+  }
+
+
+  function aiSupportCooldownActive(owner){
+    const ps = state.players[owner];
+    return !!(ps && ps.aiSupportCooldownUntil && state.turnNumber < ps.aiSupportCooldownUntil);
+  }
+
+  function aiMarkSupportPawnUse(owner, turns=6){
+    const ps = state.players[owner];
+    if(!ps) return;
+    ps.pawnSupportBookUses = (ps.pawnSupportBookUses || 0) + 1;
+    ps.aiSupportCooldownUntil = Math.max(ps.aiSupportCooldownUntil || 0, state.turnNumber + turns);
+  }
+
+  function aiSupportPawnCooldownLog(owner){
+    const ps = state.players[owner];
+    if(!ps || !ps.aiSupportCooldownUntil || state.turnNumber >= ps.aiSupportCooldownUntil) return false;
+    if(ps._lastSupportCooldownLogTurn === state.turnNumber) return true;
+    ps._lastSupportCooldownLogTurn = state.turnNumber;
+    log(`${label(owner)} AI skips another support-pawn routine and looks for real development first.`);
+    return true;
   }
 
   function aiShouldDrawPieceCard(owner, best, style=null){
@@ -5311,6 +5341,8 @@
     if(p.type === 'K') threshold -= 3;
     if(isUnmovedCornerRook(p)) threshold -= 2;
 
+    if(defaultGenBank) threshold -= 2;
+    if(countEnemyAttacks(p.r,p.c,owner) === 0) threshold -= 1;
     if(candidate.score < threshold) return null;
 
     return () => ({
@@ -5685,7 +5717,7 @@
   function chooseAiRookActivationAction(owner){
     const ps = state.players[owner];
     if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
-    if(state.turnNumber < 10 || state.turnNumber > 70) return null;
+    if(state.turnNumber < 6 || state.turnNumber > 76) return null;
 
     const enemy = other(owner);
     const rooks = livingPieces(owner).filter(p => p.type === 'R');
@@ -5697,24 +5729,40 @@
     for(const rPiece of rooks){
       for(const mv of legalMovesForPiece(rPiece)){
         if(mv.capture) continue;
+        if(aiWouldUndoLastMove(owner,rPiece,mv)) continue;
 
         const money = estimateMoveMoneyResult(rPiece,mv);
         if(money.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,money,getPieceAt(mv.r,mv.c))) continue;
 
         const postRisk = aiPostMovePieceCaptureRisk(owner, rPiece.id, mv);
-        if(postRisk.severe) continue;
+        if(postRisk.severe && state.land?.[mv.r]?.[mv.c] !== owner) continue;
 
         const beforeTargets = aiCenterSupportTargets(owner).reduce((sum,t)=>sum+countEnemyAttacks(t.r,t.c,enemy),0);
         const afterTargets = withTemporaryMove(rPiece,mv,() => aiCenterSupportTargets(owner).reduce((sum,t)=>sum+countEnemyAttacks(t.r,t.c,enemy),0));
         const gain = afterTargets - beforeTargets;
-        if(gain <= 0) continue;
 
-        let score = 44 + gain * 18;
-        if(!rPiece.moved) score += 12;
-        if(mv.r === homeRank(owner)) score += 8; // back-rank slide is often exactly what we want.
-        if(state.land?.[mv.r]?.[mv.c] === owner) score += 6;
+        const attacksAfter = withTemporaryMove(rPiece,mv,() => pseudoAttacks(state.pieces[rPiece.id] || rPiece));
+        const centerLineControl = attacksAfter.filter(a => Math.abs(3.5-a.r)+Math.abs(3.5-a.c) <= 3 || hasGeneratorAt(a.r,a.c)).length;
+        const enemyBackPressure = attacksAfter.filter(a => {
+          const t = getPieceAt(a.r,a.c);
+          return t && t.owner === enemy && ['Q','R','B','N','K'].includes(t.type);
+        }).length;
+        const homeSlide = mv.r === homeRank(owner);
+        const fileOpened = rPiece.c !== mv.c || rPiece.r !== mv.r;
+
+        // v81: do not require a perfect center-support gain. A rook sliding onto
+        // an open file or rank is still valuable because it frees the back rank
+        // and stops the bot from only pushing pawns.
+        if(gain <= 0 && centerLineControl <= 1 && enemyBackPressure <= 0 && !homeSlide) continue;
+
+        let score = 42 + gain * 16 + centerLineControl * 8 + enemyBackPressure * 14;
+        if(!rPiece.moved) score += 18;
+        if(homeSlide) score += 12;
+        if(fileOpened) score += 6;
+        if(state.land?.[mv.r]?.[mv.c] === owner) score += 7;
+        if(hasGeneratorAt(mv.r,mv.c)) score += 6;
         score -= (mv.cost || 0) * 4;
-        score -= postRisk.bad ? postRisk.risk * .45 : 0;
+        score -= postRisk.bad ? postRisk.risk * .38 : 0;
         score += mRandSmall();
 
         if(score > bestScore){
@@ -5724,10 +5772,11 @@
       }
     }
 
-    if(!best || bestScore < 58) return null;
+    if(!best || bestScore < 50) return null;
 
     return () => {
-      log(`${label(owner)} AI activates a rook to support the center instead of feeding loose pieces.`);
+      ps.aiRookActivationUses = (ps.aiRookActivationUses || 0) + 1;
+      log(`${label(owner)} AI activates a rook early instead of only pushing more pawns.`);
       executeMove(best.pieceId, best.move, false);
     };
   }
@@ -6310,11 +6359,12 @@
     if(!ps) return 'balanced';
     if(!ps.openingPlan){
       const roll = Math.random();
+      // v81: spread openings out more. Support-pawn openings were showing up too often.
       if(roll < .18) ps.openingPlan = 'instantChip';
-      else if(roll < .38) ps.openingPlan = 'queenPawn';
-      else if(roll < .58) ps.openingPlan = 'supportPawns';
-      else if(roll < .70) ps.openingPlan = 'knightStage';
-      else if(roll < .83) ps.openingPlan = 'wildPawns';
+      else if(roll < .32) ps.openingPlan = 'queenPawn';
+      else if(roll < .45) ps.openingPlan = 'supportPawns';
+      else if(roll < .66) ps.openingPlan = 'knightStage';
+      else if(roll < .80) ps.openingPlan = 'wildPawns';
       else if(roll < .90) ps.openingPlan = 'kingGambit';
       else ps.openingPlan = 'balanced';
       ps.openingPlanLockedTurn = state.turnNumber;
@@ -6519,10 +6569,9 @@
     const enemyXXIncome = aiEnemyActiveXXIncome(owner);
 
     const shouldBank =
-      ps.gold >= 34 ||
-      (ps.gold >= 31 && ownDefaultChips >= 2) ||
-      (ps.gold >= 31 && ownIncome >= 2) ||
-      (ps.gold >= 31 && enemyIncome >= ownIncome + 1) ||
+      // v81: once the AI can afford the 30g XX generator and survive with 1g,
+      // it should strongly consider building instead of letting the opponent farm.
+      ps.gold >= 31 ||
       enemyXXIncome >= 5 ||
       aiGoldBarRaceStatus(owner).enemyNear;
 
@@ -6545,11 +6594,10 @@
     const goodBank = ownLand || kingBank || rookBank || homeSafe || defaultGenBank || countEnemyAttacks(p.r,p.c,owner) === 0;
     if(!goodBank) return null;
 
-    // At exactly 31-33 gold, build only on safe/parked squares. At 34+, allow
-    // buying land afterward too.
-    if(ps.gold < 34 && !ownLand && !kingBank && !rookBank && !homeSafe) return null;
+    // v81: do not freeze at 31-33 gold. Safety is already checked above.
+    // The old rule skipped too many first-XX builds and let the other side snowball.
 
-    let threshold = 7;
+    let threshold = 3;
     if(kingBank) threshold -= 4;
     if(rookBank) threshold -= 3;
     if(ownLand) threshold -= 2;
@@ -6682,6 +6730,7 @@
 
     const addSupportPawnDouble = () => {
       if(!voluntaryAffordable(owner,6) || ps.gold < 15 + Math.max(0, style.reserveShift || 0)) return;
+      if(aiSupportCooldownActive(owner)){ aiSupportPawnCooldownLog(owner); return; }
       if((ps.pawnSupportBookUses || 0) >= 1) return;
 
       for(const firstP of livingPieces(owner).filter(x => x.type === 'P')){
@@ -6741,7 +6790,7 @@
               action:() => ({
                 aiSteps:[
                   () => {
-                    ps.pawnSupportBookUses = (ps.pawnSupportBookUses || 0) + 1;
+                    aiMarkSupportPawnUse(owner, 7);
                     log(`${label(owner)} AI uses one planned pawn-support double move, then will develop back-rank pieces.`);
                     buyDoubleMove(owner);
                   },
@@ -6757,6 +6806,7 @@
 
     const addRareTwoThreeSquarePawns = () => {
       if(!voluntaryAffordable(owner,6) || ps.gold < 18 + Math.max(0, style.reserveShift || 0)) return;
+      if(aiSupportCooldownActive(owner)){ aiSupportPawnCooldownLog(owner); return; }
       if((ps.wildPawnBookUses || 0) >= 1) return;
       const wildChance = plan === 'wildPawns' ? .82 : .12;
       if(Math.random() > wildChance) return;
@@ -6811,6 +6861,7 @@
             aiSteps:[
               () => {
                 ps.wildPawnBookUses = (ps.wildPawnBookUses || 0) + 1;
+                aiMarkSupportPawnUse(owner, 5);
                 log(`${label(owner)} AI gambles on two aggressive central 3-square pawn pushes, while keeping rook-side shields intact.`);
                 buyDoubleMove(owner);
               },
@@ -7753,6 +7804,7 @@
     const ps = state.players[owner];
     const style = getAiStyle(owner);
     if(!ps || !hasActionSlot(owner) || !hasKing(owner)) return null;
+    if(aiSupportCooldownActive(owner)){ aiSupportPawnCooldownLog(owner); return null; }
     if(state.turnNumber > 22 && aiPassiveIncome(owner) >= aiPassiveIncome(other(owner))) return null;
     if(!voluntaryAffordable(owner,6)) return null;
 
@@ -7775,6 +7827,7 @@
 
       if(!pressureMatters && canOnePawn){
         return () => {
+          aiMarkSupportPawnUse(owner, 5);
           log(`${label(owner)} AI adds one pawn of pressure and keeps its gold instead of buying an unnecessary double move.`);
           executeMove(onePawn.pieceId, onePawn.move, false);
         };
@@ -7782,6 +7835,7 @@
 
       if(canOnePawn && Math.random() < (pressureMatters ? .62 : .90)){
         return () => {
+          aiMarkSupportPawnUse(owner, 5);
           log(`${label(owner)} AI adds one pawn of pressure on ${coord(t.r,t.c)} and saves the double move for later.`);
           executeMove(onePawn.pieceId, onePawn.move, false);
         };
@@ -7793,6 +7847,7 @@
       return () => ({
         aiSteps:[
           () => {
+            aiMarkSupportPawnUse(owner, 7);
             log(`${label(owner)} AI buys Double Move because the center pressure actually matters.`);
             buyDoubleMove(owner);
           },
@@ -7821,6 +7876,7 @@
 
       if(!defenseMatters && canOnePawn){
         return () => {
+          aiMarkSupportPawnUse(owner, 5);
           log(`${label(owner)} AI uses one support pawn and does not waste Double Move on low-value defense.`);
           executeMove(onePawn.pieceId, onePawn.move, false);
         };
@@ -7828,6 +7884,7 @@
 
       if(canOnePawn && Math.random() < (defenseMatters ? .60 : .92)){
         return () => {
+          aiMarkSupportPawnUse(owner, 5);
           log(`${label(owner)} AI reinforces ${coord(p.r,p.c)} with one pawn first instead of forcing max pressure immediately.`);
           executeMove(onePawn.pieceId, onePawn.move, false);
         };
@@ -7838,6 +7895,7 @@
       return () => ({
         aiSteps:[
           () => {
+            aiMarkSupportPawnUse(owner, 7);
             log(`${label(owner)} AI buys Double Move because this pawn defense protects a real income fight.`);
             buyDoubleMove(owner);
           },
@@ -8277,8 +8335,10 @@
 
     const ownGold = state.players[rootOwner]?.gold || 0;
     const enemyGold = state.players[enemy]?.gold || 0;
-    const ownIncome = aiPassiveIncome(rootOwner) + aiActiveXXIncomeFor(rootOwner);
-    const enemyIncome = aiPassiveIncome(enemy) + aiActiveXXIncomeFor(enemy);
+    // aiPassiveIncome already includes pieces physically sitting on XX generators.
+    // Do not add aiActiveXXIncomeFor again or the search double-counts XX income.
+    const ownIncome = aiPassiveIncome(rootOwner);
+    const enemyIncome = aiPassiveIncome(enemy);
     const ownMaterial = aiMaterialValue(rootOwner);
     const enemyMaterial = aiMaterialValue(enemy);
     const ownKings = countKings(rootOwner);
