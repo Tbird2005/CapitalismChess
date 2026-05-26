@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v70</div>
+    <div class="versionBadge">Version v71</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -2247,6 +2247,12 @@
       const freeMaterialCaptureAction = chooseAiFreeMaterialCaptureAction(owner);
       if(freeMaterialCaptureAction){
         runAiActionAndFinish(owner, freeMaterialCaptureAction);
+        return;
+      }
+
+      const fortifyHeldGeneratorAction = chooseAiFortifyHeldGeneratorAction(owner);
+      if(fortifyHeldGeneratorAction){
+        runAiActionAndFinish(owner, fortifyHeldGeneratorAction);
         return;
       }
 
@@ -4222,6 +4228,11 @@
     const p = risk.piece;
     const style = getAiStyle(owner);
 
+    if(hasGeneratorAt(p.r,p.c) || state.customGen?.[p.r]?.[p.c]){
+      const fortify = chooseAiFortifyHeldGeneratorAction(owner);
+      if(fortify) return fortify;
+    }
+
     // First try to remove the attacker. That often both saves material and wins
     // the capture bounty/material exchange immediately.
     const attackerIds = new Set(risk.threats.map(t => t.attacker.id));
@@ -4256,6 +4267,9 @@
         let score = 42 + m.score * .35 + (pieceValues[p.type] || 1) * 8;
         if(state.land[m.move.r]?.[m.move.c] === owner) score += 10;
         if(hasGeneratorAt(m.move.r,m.move.c) || state.customGen[m.move.r]?.[m.move.c]) score += 7;
+        if((hasGeneratorAt(p.r,p.c) || state.customGen?.[p.r]?.[p.c]) && !(hasGeneratorAt(m.move.r,m.move.c) || state.customGen?.[m.move.r]?.[m.move.c])){
+          score -= 85;
+        }
         score -= (m.move.cost || 0) * 3;
         return {...m, saveScore:score};
       })
@@ -4311,6 +4325,39 @@
     }
 
     return null;
+  }
+
+  function aiMoveAbandonsHeldGeneratorBlunder(owner, p, mv, money, target=null){
+    if(!p || p.type === 'K' || mv.special || money?.winsImmediately) return false;
+    if(!(hasGeneratorAt(p.r,p.c) || !!state.customGen?.[p.r]?.[p.c])) return false;
+    if(mv.r === p.r && mv.c === p.c) return false;
+
+    const pValue = pieceValues[p.type] || 1;
+    if(pValue < 3) return false;
+
+    const targetValue = target && target.owner === other(owner) ? (pieceValues[target.type] || 1) : 0;
+    const currentChip = state.genChip?.[p.r]?.[p.c];
+    const currentLand = state.land?.[p.r]?.[p.c];
+    const currentIncome =
+      (isDefaultGen(p.r,p.c) && (!currentChip || currentChip === owner) ? 1 : 0) +
+      (state.customGen?.[p.r]?.[p.c] ? (isDefaultGen(p.r,p.c) ? 6 : 5) : 0);
+
+    const currentEnemyAtk = countEnemyAttacks(p.r,p.c,owner);
+    const currentOwnDef = countOwnDefenders(p.r,p.c,owner,p.id);
+    const movingForBigCapture = targetValue >= pValue || (target && ['Q','R','K'].includes(target.type));
+    const escapingBadTax = currentLand && currentLand !== owner && aiCurrentTaxBurden(owner) >= 6;
+    const destinationAlsoGenerator = hasGeneratorAt(mv.r,mv.c) || !!state.customGen?.[mv.r]?.[mv.c];
+
+    if(movingForBigCapture || escapingBadTax || destinationAlsoGenerator) return false;
+
+    // Do not step a knight/bishop/rook/queen off a live generator just because it
+    // is "hanging." Hold it, buy the chip/land, or reinforce it first.
+    if(currentIncome >= 1 && targetValue <= 1){
+      if(currentEnemyAtk <= currentOwnDef + 1) return true;
+      if(currentChip !== other(owner)) return true;
+    }
+
+    return false;
   }
 
   function aiMoveIsUnsupportedCenterBlunder(owner, p, mv, money, target=null){
@@ -4382,6 +4429,110 @@
   }
 
   function mRandSmall(){ return Math.random() * 2; }
+
+  function aiHeldGeneratorPieces(owner){
+    return livingPieces(owner)
+      .filter(p => hasGeneratorAt(p.r,p.c) || !!state.customGen?.[p.r]?.[p.c])
+      .map(p => {
+        const enemyAtk = countEnemyAttacks(p.r,p.c,owner);
+        const ownDef = countOwnDefenders(p.r,p.c,owner,p.id);
+        const chip = state.genChip?.[p.r]?.[p.c];
+        const land = state.land?.[p.r]?.[p.c];
+        const income = (isDefaultGen(p.r,p.c) ? 1 : 0) + (state.customGen?.[p.r]?.[p.c] ? (isDefaultGen(p.r,p.c) ? 6 : 5) : 0);
+        let score = 50 + income * 12;
+        if(chip !== owner) score += chip === other(owner) ? 42 : 28;
+        if(land !== owner) score += enemyAtk > ownDef ? 28 : 12;
+        if(enemyAtk > ownDef) score += (enemyAtk-ownDef) * 24;
+        if(p.type === 'N') score += 8; // knights are great center holders.
+        if(['B','R','Q'].includes(p.type)) score += 4;
+        return {p, enemyAtk, ownDef, chip, land, income, score};
+      })
+      .sort((a,b)=>b.score-a.score);
+  }
+
+  function chooseAiFortifyHeldGeneratorAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+
+    const held = aiHeldGeneratorPieces(owner)
+      .filter(x => x.income > 0 || x.chip !== owner || x.enemyAtk > 0 || x.land !== owner);
+
+    if(!held.length) return null;
+    const best = held[0];
+    const p = best.p;
+
+    // First: if we are already standing on a generator, buy the chip instead of
+    // walking away from the square. This fixes the e4 knight type blunder.
+    if(best.chip !== owner){
+      const cost = best.chip === other(owner) ? 8 : 5;
+      const reserve = best.enemyAtk > best.ownDef ? 2 : 4;
+      if(voluntaryAffordable(owner,cost) && state.players[owner].gold - cost > reserve){
+        return () => {
+          log(`${label(owner)} AI holds the generator it already reached by buying the chip at ${coord(p.r,p.c)}.`);
+          buyGeneratorChip(owner, p.id, false);
+        };
+      }
+    }
+
+    // Second: buy land under the holder if it is contested. This turns enemy
+    // captures into taxes and makes the holder less "free."
+    if(best.land !== owner && ps.landPurchases < 2 && (best.enemyAtk > 0 || best.income >= 1)){
+      const cost = landCostForPiece(p);
+      if(ps.freeLand || voluntaryAffordable(owner,cost)){
+        return () => {
+          log(`${label(owner)} AI fortifies its held generator by buying land under ${p.type} on ${coord(p.r,p.c)}.`);
+          buyLand(owner, p.id);
+        };
+      }
+    }
+
+    // Third: add a real defender without moving the holder away.
+    if(best.enemyAtk >= best.ownDef){
+      const beforeDef = countOwnDefenders(p.r,p.c,owner,p.id);
+      let support = null;
+      let supportScore = -99999;
+
+      const all = allMoves(owner, getAiStyle(owner));
+      for(const m of all){
+        if(m.pieceId === p.id) continue; // do not abandon the generator holder.
+        const mover = state.pieces[m.pieceId];
+        if(!mover) continue;
+        const target = getPieceAt(m.move.r,m.move.c);
+        if(target && target.owner === other(owner) && (pieceValues[target.type] || 1) < 3) continue;
+
+        const afterDef = withTemporaryMove(mover, m.move, () => countOwnDefenders(p.r,p.c,owner,p.id));
+        if(afterDef <= beforeDef) continue;
+
+        let score = 42 + (afterDef-beforeDef) * 26 + m.score * .22;
+        if(mover.type === 'P') score += 18;
+        if(mover.type === 'R') score += 16;
+        if(mover.type === 'N') score += 12;
+        if(state.land?.[m.move.r]?.[m.move.c] === owner) score += 6;
+        score -= (m.move.cost || 0) * 4;
+
+        if(score > supportScore){
+          supportScore = score;
+          support = {...m, moverType:mover.type, afterDef, score};
+        }
+      }
+
+      if(support && supportScore >= 48){
+        return () => {
+          log(`${label(owner)} AI reinforces the held generator at ${coord(p.r,p.c)} instead of moving the holder away.`);
+          executeMove(support.pieceId, support.move, false);
+          if(!state.gameOver){
+            const moved = state.pieces[support.pieceId];
+            if(moved && moved.owner === owner && !moved.captured && ps.landPurchases < 2 && state.land[moved.r][moved.c] !== owner){
+              const cost = landCostForPiece(moved);
+              if(ps.freeLand || voluntaryAffordable(owner,cost)) buyLand(owner, moved.id);
+            }
+          }
+        };
+      }
+    }
+
+    return null;
+  }
 
   function chooseAiDevelopSupportBeforeCenterAction(owner){
     const ps = state.players[owner];
@@ -4537,6 +4688,9 @@
             continue;
           }
           if(aiMoveIsUnsupportedCenterBlunder(owner, p, mv, money, target)){
+            continue;
+          }
+          if(aiMoveAbandonsHeldGeneratorBlunder(owner, p, mv, money, target)){
             continue;
           }
         }
