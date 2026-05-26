@@ -477,7 +477,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v77</div>
+    <div class="versionBadge">Version v79</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -2373,6 +2373,12 @@
       if(state.pendingCardPlacement){ autoPlacePendingCard(); }
       if(state.gameOver) return;
 
+      if(state.players[owner].gold >= 100){
+        buyGoldBar(owner);
+        render();
+        return;
+      }
+
       const immediateBankruptcyKillAction = chooseAiImmediateBankruptcyKillAction(owner);
       if(immediateBankruptcyKillAction){
         runAiActionAndFinish(owner, immediateBankruptcyKillAction);
@@ -2411,8 +2417,6 @@
         return;
       }
 
-      if(state.players[owner].gold >= 100){ buyGoldBar(owner); render(); return; }
-
       const cheapRecaptureAction = chooseAiCheapRecaptureInsteadOfResurrectionAction(owner);
       if(cheapRecaptureAction){
         runAiActionAndFinish(owner, cheapRecaptureAction);
@@ -2437,6 +2441,18 @@
         return;
       }
 
+      const openingBookAction = chooseAiOpeningBookAction(owner);
+      if(openingBookAction && !findAnyKingLineThreat(owner)){
+        runAiActionAndFinish(owner, openingBookAction);
+        return;
+      }
+
+      const proactiveXXBuildAction = chooseAiProactiveXXBuildAction(owner);
+      if(proactiveXXBuildAction && !findAnyKingLineThreat(owner)){
+        runAiActionAndFinish(owner, proactiveXXBuildAction);
+        return;
+      }
+
       const secondAntiXXNormalFightAction = chooseAiAntiXXNormalFightAction(owner);
       if(secondAntiXXNormalFightAction){
         runAiActionAndFinish(owner, secondAntiXXNormalFightAction);
@@ -2452,6 +2468,12 @@
       const secondAntiXXKingGambleAction = chooseAiAntiXXExtraKingGambleAction(owner);
       if(secondAntiXXKingGambleAction){
         runAiActionAndFinish(owner, secondAntiXXKingGambleAction);
+        return;
+      }
+
+      const secondProactiveXXBuildAction = chooseAiProactiveXXBuildAction(owner);
+      if(secondProactiveXXBuildAction && !findAnyKingLineThreat(owner)){
+        runAiActionAndFinish(owner, secondProactiveXXBuildAction);
         return;
       }
 
@@ -2563,21 +2585,9 @@
         return;
       }
 
-      const openingChipComboAction = chooseAiOpeningPlanChipComboAction(owner);
-      if(openingChipComboAction){
-        runAiActionAndFinish(owner, openingChipComboAction);
-        return;
-      }
-
-      const earlyGambitBookAction = chooseAiOpeningKingGambitAction(owner);
-      if(earlyGambitBookAction){
-        runAiActionAndFinish(owner, earlyGambitBookAction);
-        return;
-      }
-
-      const openingVarietyAction = chooseAiOpeningVarietyAction(owner);
-      if(openingVarietyAction){
-        runAiActionAndFinish(owner, openingVarietyAction);
+      const lateOpeningBookAction = chooseAiOpeningBookAction(owner);
+      if(lateOpeningBookAction){
+        runAiActionAndFinish(owner, lateOpeningBookAction);
         return;
       }
 
@@ -3026,6 +3036,7 @@
   function chooseAiAction(owner){
     const ps = state.players[owner];
     const style = getAiStyle(owner);
+    if(ps && ps.gold >= 100 && hasActionSlot(owner)) return () => buyGoldBar(owner);
 
     if(canResurrect(owner)){
       const cap = state.lastCapture?.captured;
@@ -3113,7 +3124,12 @@
       }
     }
 
-    if(best) return () => executeMove(best.pieceId, best.move, false);
+    if(best) return () => {
+      if(best.aiLookaheadChosen){
+        log(`${label(owner)} AI chooses this move after tactical lookahead instead of only using the one-move score.`);
+      }
+      executeMove(best.pieceId, best.move, false);
+    };
     if(aiShouldDrawPieceCard(owner, null, style)) return () => drawCard(owner);
     return () => { ps.usedTurnAction = true; log(`${label(owner)} AI passed.`); };
   }
@@ -3649,6 +3665,7 @@
   }
 
   function findAiKingCoverDefenseAction(owner){
+    const ps = state.players[owner];
     const threat = findEnemyKingCoverCaptureThreat(owner);
     if(!threat) return null;
 
@@ -3726,7 +3743,6 @@
       };
     }
 
-    const ps = state.players[owner];
     const cost = landCostForPiece(king);
     if(ps && ps.landPurchases < 2 && state.land[king.r][king.c] !== owner && (ps.freeLand || voluntaryAffordable(owner,cost))){
       return () => {
@@ -5227,9 +5243,10 @@
 
     const race = aiGoldBarRaceStatus(owner);
     const needsXX =
-      enemyIncome >= ownIncome + 2 ||
-      enemyChips >= ownChips + 2 ||
-      (ownChips < 2 && ps.gold >= 34) ||
+      enemyIncome >= ownIncome + 1 ||
+      enemyChips >= ownChips + 1 ||
+      (ownChips < 2 && ps.gold >= 32) ||
+      ps.gold >= 34 ||
       race.enemyNear ||
       ps.gold >= 40;
 
@@ -5257,7 +5274,7 @@
     const landCost = state.land?.[p.r]?.[p.c] === owner ? 0 : landCostForPiece(p);
     if(p.type === 'K' && state.land?.[p.r]?.[p.c] !== owner && after - landCost <= 1) return null;
 
-    let threshold = 10;
+    let threshold = 6;
     if(enemyIncome >= ownIncome + 4) threshold -= 4;
     if(race.enemyNear) threshold -= 5;
     if(ps.gold >= 38) threshold -= 2;
@@ -5326,6 +5343,16 @@
 
     const style = getAiStyle(owner);
     const enemy = other(owner);
+
+    // Early expansion is only the fallback. The opening book gets first shot so
+    // the AI does not play the same d/e pawn structure every game.
+    if(state.turnNumber <= 16){
+      const plan = getAiOpeningPlan(owner);
+      if(['instantChip','queenPawn','supportPawns','wildPawns','knightStage','kingGambit'].includes(plan)){
+        return null;
+      }
+    }
+
     const raceStatus = aiGoldBarRaceStatus(owner);
     if(raceStatus.ownGold >= 88 && !raceStatus.enemyCritical) return null;
     const targets = aiOpenGeneratorTargets(owner);
@@ -6177,8 +6204,8 @@
 
     // Knight staging is a tool, not the whole opening book. Unless this game
     // rolled the knight-stage plan, let pawns and generator plans happen first.
-    if(state.turnNumber <= 6 && openingPlan !== 'knightStage') return null;
-    if(state.turnNumber <= 18 && !['knightStage','balanced'].includes(openingPlan) && Math.random() < .72) return null;
+    if(state.turnNumber <= 6 && !['knightStage','kingGambit'].includes(openingPlan)) return null;
+    if(state.turnNumber <= 18 && !['knightStage','kingGambit','balanced'].includes(openingPlan) && Math.random() < .72) return null;
 
     const candidates = aiKnightStagingCandidates(owner);
     if(!candidates.length) return null;
@@ -6262,6 +6289,110 @@
       log(`${label(owner)} AI opening plan: ${ps.openingPlan}.`);
     }
     return ps.openingPlan;
+  }
+
+  function chooseAiOpeningBookAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(state.turnNumber > 20) return null;
+
+    const plan = getAiOpeningPlan(owner);
+
+    // Critical tactics override book, but generic "expand to open generator" should
+    // not erase the opening personality every game.
+    if(plan === 'instantChip'){
+      return chooseAiOpeningPlanChipComboAction(owner) || chooseAiOpeningVarietyAction(owner);
+    }
+
+    if(plan === 'kingGambit'){
+      return chooseAiOpeningKingGambitAction(owner) || chooseAiKnightStagingAction(owner) || chooseAiOpeningVarietyAction(owner);
+    }
+
+    if(plan === 'knightStage'){
+      return chooseAiKnightStagingAction(owner) || chooseAiOpeningKingGambitAction(owner) || chooseAiOpeningVarietyAction(owner);
+    }
+
+    if(plan === 'supportPawns' || plan === 'queenPawn' || plan === 'wildPawns'){
+      return chooseAiOpeningVarietyAction(owner);
+    }
+
+    // Balanced still gets a little book variety instead of only d/e pawn expansion.
+    if(plan === 'balanced' && Math.random() < .65){
+      return chooseAiOpeningVarietyAction(owner) || chooseAiKnightStagingAction(owner);
+    }
+
+    return null;
+  }
+
+  function chooseAiProactiveXXBuildAction(owner){
+    const ps = state.players[owner];
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(!voluntaryAffordable(owner,30)) return null;
+    if(aiOwnCustomGeneratorCount(owner) > 0) return null;
+
+    const enemy = other(owner);
+    const status = aiGeneratorGoalStatus(owner);
+    const ownIncome = aiPassiveIncome(owner);
+    const enemyIncome = aiPassiveIncome(enemy);
+    const ownDefaultChips = aiDefaultChipCount(owner);
+    const enemyXXIncome = aiEnemyActiveXXIncome(owner);
+
+    const shouldBank =
+      ps.gold >= 34 ||
+      (ps.gold >= 31 && ownDefaultChips >= 2) ||
+      (ps.gold >= 31 && ownIncome >= 2) ||
+      (ps.gold >= 31 && enemyIncome >= ownIncome + 1) ||
+      enemyXXIncome >= 5 ||
+      aiGoldBarRaceStatus(owner).enemyNear;
+
+    if(!shouldBank) return null;
+
+    const style = getAiStyle(owner);
+    const candidate = bestCustomGenSpot(owner, style);
+    if(!candidate || !candidate.p) return null;
+
+    const p = candidate.p;
+    const after = ps.gold - 30;
+    if(after <= 0) return null;
+
+    const ownLand = state.land?.[p.r]?.[p.c] === owner;
+    const homeSafe = p.r === homeRank(owner) && countEnemyAttacks(p.r,p.c,owner) === 0;
+    const kingBank = p.type === 'K';
+    const rookBank = p.type === 'R' && (isUnmovedCornerRook(p) || p.r === homeRank(owner));
+    const defaultGenBank = isDefaultGen(p.r,p.c);
+
+    const goodBank = ownLand || kingBank || rookBank || homeSafe || defaultGenBank || countEnemyAttacks(p.r,p.c,owner) === 0;
+    if(!goodBank) return null;
+
+    // At exactly 31-33 gold, build only on safe/parked squares. At 34+, allow
+    // buying land afterward too.
+    if(ps.gold < 34 && !ownLand && !kingBank && !rookBank && !homeSafe) return null;
+
+    let threshold = 7;
+    if(kingBank) threshold -= 4;
+    if(rookBank) threshold -= 3;
+    if(ownLand) threshold -= 2;
+    if(enemyIncome >= ownIncome + 2) threshold -= 3;
+    if(enemyXXIncome >= 5) threshold -= 5;
+    if(aiGoldBarRaceStatus(owner).enemyNear) threshold -= 4;
+
+    if(candidate.score < threshold) return null;
+
+    return () => ({
+      aiSteps:[
+        () => {
+          log(`${label(owner)} AI builds an XX generator early instead of waiting for the opponent to farm capital first.`);
+          buildCustomGenerator(owner, p.id, false);
+        },
+        () => {
+          const pp = state.pieces[p.id];
+          if(pp && !pp.captured && pp.owner === owner && state.land?.[pp.r]?.[pp.c] !== owner){
+            const cost = landCostForPiece(pp);
+            if(voluntaryAffordable(owner,cost)) buyLand(owner, pp.id);
+          }
+        }
+      ]
+    });
   }
 
   function chooseAiOpeningPlanChipComboAction(owner){
@@ -6496,20 +6627,28 @@
     addRareTwoThreeSquarePawns();
 
     for(const c of candidates){
-      if(plan === 'queenPawn' && c.type === 'singleQueenFile') c.score += 28;
-      if(plan === 'supportPawns' && c.type === 'supportPawnDouble') c.score += 26;
-      if(plan === 'wildPawns' && c.type === 'rareTwoThreeSquare') c.score += 30;
+      if(plan === 'queenPawn' && c.type === 'singleQueenFile') c.score += 45;
+      if(plan === 'supportPawns' && c.type === 'supportPawnDouble') c.score += 44;
+      if(plan === 'wildPawns' && c.type === 'rareTwoThreeSquare') c.score += 55;
       if(plan === 'instantChip' && c.type !== 'singleQueenFile') c.score -= 4;
-      if(plan === 'knightStage') c.score += 4; // still allow pawn openings sometimes.
+      if(plan === 'knightStage') c.score -= 10; // knight plan should actually develop knights first.
     }
 
     if(!candidates.length) return null;
     candidates.sort((a,b) => b.score - a.score);
 
-    // Weighted variety. The best line usually wins, but not always.
-    const top = candidates.slice(0,3);
-    const pick = top[Math.floor(Math.random() * Math.min(top.length, Math.random() < .68 ? 1 : top.length))];
-    return pick?.action || null;
+    // Weighted variety. When the opening plan says "wildPawns" or "supportPawns",
+    // actually play that kind of move instead of drifting back to the same pawn push.
+    const planMatches = candidates.filter(c =>
+      (plan === 'queenPawn' && c.type === 'singleQueenFile') ||
+      (plan === 'supportPawns' && c.type === 'supportPawnDouble') ||
+      (plan === 'wildPawns' && c.type === 'rareTwoThreeSquare')
+    );
+    const pool = planMatches.length ? planMatches.slice(0,3) : candidates.slice(0,4);
+    const pickCount = Math.min(pool.length, planMatches.length ? 2 : pool.length);
+    const best = pool[Math.floor(Math.random() * Math.max(1,pickCount))] || candidates[0];
+    if(!best || best.score < (planMatches.length ? 48 : 54)) return null;
+    return best.action || null;
   }
 
   function aiOwnedXXChips(owner){
@@ -7909,12 +8048,242 @@
     return {afterGold:gold, delta:gold-state.players[owner].gold, taxPaid, genGain, captureGain, actionCost, promotionCost, futureTurnTax, futureTaxEscapeCost, futureTaxEscapePossible, bankruptsSelf:gold <= 0, winsImmediately};
   }
 
+  function aiMaterialValue(owner){
+    let total = 0;
+    for(const p of livingPieces(owner)){
+      total += pieceValues[p.type] || 1;
+    }
+    return total;
+  }
+
+  function aiActiveXXIncomeFor(owner){
+    let total = 0;
+    for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
+      if(!state.customGen?.[r]?.[c]) continue;
+      const occ = getPieceAt(r,c);
+      if(occ && occ.owner === owner){
+        total += isDefaultGen(r,c) ? 6 : 5;
+      }
+    }
+    return total;
+  }
+
+  function aiStaticEval(rootOwner){
+    const enemy = other(rootOwner);
+    if(state.gameOver){
+      if(state.winner === rootOwner) return 999999;
+      if(state.winner === enemy) return -999999;
+    }
+
+    const ownGold = state.players[rootOwner]?.gold || 0;
+    const enemyGold = state.players[enemy]?.gold || 0;
+    const ownIncome = aiPassiveIncome(rootOwner) + aiActiveXXIncomeFor(rootOwner);
+    const enemyIncome = aiPassiveIncome(enemy) + aiActiveXXIncomeFor(enemy);
+    const ownMaterial = aiMaterialValue(rootOwner);
+    const enemyMaterial = aiMaterialValue(enemy);
+    const ownKings = countKings(rootOwner);
+    const enemyKings = countKings(enemy);
+    const ownChips = aiOwnedGeneratorChips(rootOwner);
+    const enemyChips = aiOwnedGeneratorChips(enemy);
+    const ownTax = aiCurrentTaxBurden(rootOwner);
+    const enemyTax = aiCurrentTaxBurden(enemy);
+
+    let score = 0;
+    score += (ownGold - enemyGold) * 2.25;
+    score += (ownIncome - enemyIncome) * 22;
+    score += (ownMaterial - enemyMaterial) * 13;
+    score += (ownKings - enemyKings) * 70;
+    score += (ownChips - enemyChips) * 10;
+    score -= ownTax * 18;
+    score += enemyTax * 14;
+
+    if(ownGold >= 100) score += 250000;
+    if(enemyGold >= 100) score -= 250000;
+    if(ownGold >= 90) score += (ownGold - 89) * 18;
+    if(enemyGold >= 90) score -= (enemyGold - 89) * 22;
+
+    // Center and generator occupancy matter, but only after material/economy.
+    for(let r=0;r<SIZE;r++) for(let c=0;c<SIZE;c++){
+      const occ = getPieceAt(r,c);
+      if(!occ) continue;
+      const sign = occ.owner === rootOwner ? 1 : -1;
+      const centerDist = Math.abs(3.5-r)+Math.abs(3.5-c);
+      if(centerDist <= 3) score += sign * (5-centerDist) * 1.2;
+      if(hasGeneratorAt(r,c)) score += sign * 5;
+      if(state.customGen?.[r]?.[c]) score += sign * 12;
+      if(state.land?.[r]?.[c] === occ.owner) score += sign * 2;
+    }
+
+    return score;
+  }
+
+  function aiLookaheadMoveOrderingScore(m){
+    const target = getPieceAt(m.move.r,m.move.c);
+    let s = m.score || 0;
+    if(target && target.owner !== state.pieces[m.pieceId]?.owner){
+      s += (pieceValues[target.type] || 1) * 18;
+      if(target.type === 'K') s += 120;
+      if(target.type === 'Q') s += 45;
+      if(target.type === 'R') s += 24;
+    }
+    if(hasGeneratorAt(m.move.r,m.move.c)) s += 12;
+    if(state.customGen?.[m.move.r]?.[m.move.c]) s += 28;
+    if(m.money?.winsImmediately) s += 5000;
+    if(m.money?.bankruptsSelf) s -= 5000;
+    return s;
+  }
+
+  function aiLookaheadDepth(owner){
+    const pieces = Object.values(state.pieces).filter(p => !p.captured).length;
+    const race = aiGoldBarRaceStatus(owner);
+    if(race.enemyNear || race.ownClose) return 4;
+    if(pieces <= 16) return 4;
+    if(pieces <= 24) return 3;
+    return 3;
+  }
+
+  function aiTopLookaheadMoves(owner, limit, style=null){
+    const moves = allMoves(owner, style || getAiStyle(owner));
+    moves.sort((a,b)=>aiLookaheadMoveOrderingScore(b)-aiLookaheadMoveOrderingScore(a));
+    return moves.slice(0, Math.min(limit, moves.length));
+  }
+
+  function aiSearchApplyMoveAndEconomy(temp, mover, moveObj){
+    if(!applyQuietAiMove(temp, mover, moveObj.pieceId, moveObj.move)) return false;
+    if(!temp.gameOver) applyQuietGlobalEconomyTo(temp);
+    return true;
+  }
+
+  function aiNegamaxLookahead(rootOwner, sideToMove, depth, alpha, beta, ctx){
+    ctx.nodes = (ctx.nodes || 0) + 1;
+    if(ctx.nodes > ctx.budget) return aiStaticEval(rootOwner);
+    if(state.gameOver || depth <= 0) return aiStaticEval(rootOwner);
+
+    const maximizing = sideToMove === rootOwner;
+    const style = getAiStyle(sideToMove);
+    const branch = depth >= 3 ? ctx.branch : Math.max(4, ctx.branch - 1);
+    const moves = aiTopLookaheadMoves(sideToMove, branch, style);
+
+    if(!moves.length) return aiStaticEval(rootOwner);
+
+    if(maximizing){
+      let best = -Infinity;
+      for(const m of moves){
+        const temp = deepClone(state);
+        const val = withTemporaryState(temp, () => {
+          if(!aiSearchApplyMoveAndEconomy(temp, sideToMove, m)) return -999999;
+          return aiNegamaxLookahead(rootOwner, other(sideToMove), depth-1, alpha, beta, ctx);
+        });
+        if(val > best) best = val;
+        alpha = Math.max(alpha, best);
+        if(beta <= alpha) break;
+      }
+      return best;
+    } else {
+      let best = Infinity;
+      for(const m of moves){
+        const temp = deepClone(state);
+        const val = withTemporaryState(temp, () => {
+          if(!aiSearchApplyMoveAndEconomy(temp, sideToMove, m)) return 999999;
+          return aiNegamaxLookahead(rootOwner, other(sideToMove), depth-1, alpha, beta, ctx);
+        });
+        if(val < best) best = val;
+        beta = Math.min(beta, best);
+        if(beta <= alpha) break;
+      }
+      return best;
+    }
+  }
+
+  function aiLookaheadScoreRootMove(owner, moveObj, depth, ctx){
+    const temp = deepClone(state);
+    return withTemporaryState(temp, () => {
+      if(!aiSearchApplyMoveAndEconomy(temp, owner, moveObj)) return -999999;
+      const future = aiNegamaxLookahead(owner, other(owner), depth-1, -Infinity, Infinity, ctx);
+      return future + (moveObj.score || 0) * .35;
+    });
+  }
+
+  function aiChooseLookaheadMove(owner, moves, style=null){
+    if(!moves || !moves.length) return null;
+    style = style || getAiStyle(owner);
+
+    const depth = aiLookaheadDepth(owner);
+    const ctx = {
+      nodes:0,
+      budget: (depth >= 4 ? 520 : 360),
+      branch: (depth >= 4 ? 5 : 6)
+    };
+
+    const rootLimit = Math.min(10, moves.length);
+    const rootMoves = moves
+      .slice()
+      .sort((a,b)=>aiLookaheadMoveOrderingScore(b)-aiLookaheadMoveOrderingScore(a))
+      .slice(0, rootLimit);
+
+    let best = null;
+    let bestScore = -Infinity;
+    for(const m of rootMoves){
+      const s = aiLookaheadScoreRootMove(owner, m, depth, ctx);
+      m.lookaheadScore = s;
+      if(s > bestScore){
+        bestScore = s;
+        best = m;
+      }
+      if(ctx.nodes > ctx.budget) break;
+    }
+
+    if(!best) return null;
+
+    // If lookahead sees a clearly safer/better line, trust it. If it is very
+    // close, keep a little personality/randomness so every AI does not feel cloned.
+    const immediateBest = moves[0];
+    const immediateLook = Number.isFinite(immediateBest.lookaheadScore) ? immediateBest.lookaheadScore : aiLookaheadScoreRootMove(owner, immediateBest, Math.max(2, depth-1), {nodes:0,budget:120,branch:4});
+    const margin = bestScore - immediateLook;
+
+    if(best !== immediateBest && margin > 18){
+      best.aiLookaheadChosen = true;
+      return best;
+    }
+
+    // Among similarly valued searched lines, pick one of the top searched moves
+    // but heavily weight the best lookahead score.
+    const searched = rootMoves
+      .filter(m => Number.isFinite(m.lookaheadScore))
+      .sort((a,b)=>b.lookaheadScore-a.lookaheadScore)
+      .slice(0, Math.min(3, rootMoves.length));
+
+    if(!searched.length) return best;
+
+    const topScore = searched[0].lookaheadScore;
+    const weighted = searched.map((m,i)=>({
+      m,
+      w: Math.max(1, 12 - i*3 + Math.max(0, (m.lookaheadScore - topScore + 20) / 4))
+    }));
+    let total = weighted.reduce((s,x)=>s+x.w,0);
+    let roll = Math.random()*total;
+    for(const x of weighted){
+      roll -= x.w;
+      if(roll <= 0){
+        x.m.aiLookaheadChosen = true;
+        return x.m;
+      }
+    }
+
+    best.aiLookaheadChosen = true;
+    return best;
+  }
+
   function bestMoveFor(owner, style=null){
     if(!style) style = getAiStyle(owner);
     const moves = allMoves(owner, style);
     if(!moves.length) return null;
     moves.sort((a,b)=>b.score-a.score);
-    // Soft randomness among top choices so AI is not identical every reset.
+
+    const searched = aiChooseLookaheadMove(owner, moves, style);
+    if(searched) return searched;
+
+    // Fallback soft randomness among top immediate choices.
     const top = moves.slice(0, Math.min(style.randomTop || 4,moves.length));
     const weighted = top.map((m,i)=>({m,w:Math.max(1, 8-i*2) + Math.max(0,m.score/4)}));
     let total = weighted.reduce((s,x)=>s+x.w,0);
@@ -8257,7 +8626,7 @@
       }
 
       if(p.type === 'K'){
-        score += 17 * (style.xxKingBias || 1);
+        score += 23 * (style.xxKingBias || 1);
         reason = `its king square ${coord(p.r,p.c)}`;
         if(kings > 1) score += 7; // extra kings plus XX gen income can snowball
         if(ownLand) score += 9;
@@ -8268,6 +8637,10 @@
       if(home){
         const homeBonus = p.type === 'P' ? 1.5 : 8.5;
         score += homeBonus * (style.xxHomeBias || 1);
+        if(p.type === 'R'){
+          score += isUnmovedCornerRook(p) ? 12 : 7;
+          reason = `rook bank square ${coord(p.r,p.c)}`;
+        }
         if(reason === 'a safe square') reason = `back-rank square ${coord(p.r,p.c)}`;
       }
 
