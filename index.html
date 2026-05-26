@@ -330,7 +330,7 @@
 <div class="menuScreen" id="mainMenu">
   <div class="menuCard">
     <h2 class="menuTitle">Capitalism Chess</h2>
-    <div class="versionBadge">Version v59</div>
+    <div class="versionBadge">Version v60</div>
     <div class="menuSub">Pick how you want to play. Offline keeps everything on this computer. Multiplayer uses a 4 character room code so a friend can join.</div>
     <div class="menuActions">
       <button id="playOfflineBtn" class="bigPrimary">Play Offline</button>
@@ -1924,6 +1924,12 @@
         return;
       }
 
+      const openingVarietyAction = chooseAiOpeningVarietyAction(owner);
+      if(openingVarietyAction){
+        runAiActionAndFinish(owner, openingVarietyAction);
+        return;
+      }
+
       const xxBankProtectionAction = chooseAiProtectXXBankAction(owner);
       if(xxBankProtectionAction){
         runAiActionAndFinish(owner, xxBankProtectionAction);
@@ -1933,12 +1939,6 @@
       const strategicXXBankAction = chooseAiStrategicXXBankAction(owner);
       if(strategicXXBankAction){
         runAiActionAndFinish(owner, strategicXXBankAction);
-        return;
-      }
-
-      const moveThenGeneratorChipAction = chooseAiMoveThenGeneratorChipAction(owner);
-      if(moveThenGeneratorChipAction){
-        runAiActionAndFinish(owner, moveThenGeneratorChipAction);
         return;
       }
 
@@ -1969,6 +1969,12 @@
       const economyBookAction = chooseAiOpeningEconomyAction(owner);
       if(economyBookAction){
         runAiActionAndFinish(owner, economyBookAction);
+        return;
+      }
+
+      const moveThenGeneratorChipAction = chooseAiMoveThenGeneratorChipAction(owner);
+      if(moveThenGeneratorChipAction){
+        runAiActionAndFinish(owner, moveThenGeneratorChipAction);
         return;
       }
 
@@ -3924,6 +3930,187 @@
     });
   }
 
+  function chooseAiOpeningVarietyAction(owner){
+    const ps = state.players[owner];
+    const style = getAiStyle(owner);
+    if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
+    if(state.turnNumber > 16) return null;
+
+    const candidates = [];
+    const reserve = Math.max(4, 7 + Math.max(0, style.reserveShift || 0));
+
+    const addSingleQueenFilePawn = () => {
+      for(const p of livingPieces(owner).filter(x => x.type === 'P')){
+        for(const mv of legalMovesForPiece(p)){
+          if(mv.note !== 'paid 3-square pawn start') continue;
+          if(mv.capture) continue;
+          if(!isDefaultGen(mv.r,mv.c) && Math.abs(3.5-mv.r)+Math.abs(3.5-mv.c) > 3) continue;
+
+          const money = estimateMoveMoneyResult(p,mv);
+          if(money.bankruptsSelf || money.afterGold <= reserve || aiMoveLeavesDangerousTurnTax(owner,money,getPieceAt(mv.r,mv.c))) continue;
+
+          const defenders = withTemporaryMove(p,mv,() => countOwnDefenders(mv.r,mv.c,owner,p.id));
+          let score = 42;
+          if(p.c === 3) score += 18; // queen-file pawn. Queen usually backs this up.
+          if(isDefaultGen(mv.r,mv.c)) score += 20;
+          if(!state.genChip[mv.r][mv.c]) score += 7;
+          if(state.land[mv.r][mv.c] === owner) score += 5;
+          if(defenders > 0) score += defenders * 14;
+          else score -= 18;
+          score -= (mv.cost || 0) * 4;
+          score += Math.random() * 3;
+
+          if(score >= 50){
+            candidates.push({
+              type:'singleQueenFile',
+              score,
+              action:() => {
+                log(`${label(owner)} AI uses a queen-backed 3-square pawn push instead of rushing the instant chip combo.`);
+                executeMove(p.id,mv,false);
+                if(!state.gameOver) aiMaybeBuyLandUnderPiece(owner,p.id,false);
+              }
+            });
+          }
+        }
+      }
+    };
+
+    const addSupportPawnDouble = () => {
+      if(!voluntaryAffordable(owner,6) || ps.gold < 15 + Math.max(0, style.reserveShift || 0)) return;
+
+      for(const firstP of livingPieces(owner).filter(x => x.type === 'P')){
+        const firstMoves = legalMovesForPiece(firstP)
+          .filter(mv => !mv.capture && (isDefaultGen(mv.r,mv.c) || Math.abs(3.5-mv.r)+Math.abs(3.5-mv.c) <= 3))
+          .filter(mv => ['first double','paid 3-square pawn start','paid 2-square pawn move','pawn'].includes(mv.note));
+
+        for(const first of firstMoves){
+          const firstMoney = estimateMoveMoneyResult(firstP,first);
+          if(firstMoney.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,firstMoney,getPieceAt(first.r,first.c))) continue;
+
+          const options = withTemporaryMove(firstP, first, () => {
+            const found = [];
+            for(const secondP of livingPieces(owner).filter(x => x.type === 'P' && x.id !== firstP.id)){
+              for(const second of legalMovesForPiece(secondP)){
+                if(second.capture) continue;
+                const money = estimateMoveMoneyResult(secondP,second);
+                if(money.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,money,getPieceAt(second.r,second.c))) continue;
+                const defenders = withTemporaryMove(secondP,second,() => countOwnDefenders(first.r,first.c,owner,firstP.id));
+                if(defenders <= 0) continue;
+                found.push({secondP,second:{...second},defenders,money});
+              }
+            }
+            found.sort((a,b) => b.defenders - a.defenders || (b.money.afterGold-a.money.afterGold));
+            return found;
+          });
+
+          const bestSupport = options[0];
+          if(!bestSupport) continue;
+
+          const roughAfter = ps.gold - 6 - (first.cost || 0) - (bestSupport.second.cost || 0);
+          if(roughAfter <= reserve) continue;
+
+          let score = 54;
+          if(isDefaultGen(first.r,first.c)) score += 18;
+          if(first.note === 'paid 3-square pawn start') score += 4;
+          if(first.note === 'first double') score += 6;
+          score += bestSupport.defenders * 15;
+          if(state.genChip[first.r][first.c] === other(owner)) score += 8;
+          if(!state.genChip[first.r][first.c]) score += 5;
+          score -= (first.cost || 0) * 3 + (bestSupport.second.cost || 0) * 3;
+          score += Math.random() * 3;
+
+          if(score >= 62){
+            candidates.push({
+              type:'supportPawnDouble',
+              score,
+              action:() => ({
+                aiSteps:[
+                  () => {
+                    log(`${label(owner)} AI uses Double Move for a pawn push plus support pawn, not the instant chip combo.`);
+                    buyDoubleMove(owner);
+                  },
+                  () => executeMove(firstP.id,first,false),
+                  () => executeMove(bestSupport.secondP.id,bestSupport.second,false)
+                ]
+              })
+            });
+          }
+        }
+      }
+    };
+
+    const addRareTwoThreeSquarePawns = () => {
+      if(!voluntaryAffordable(owner,6) || ps.gold < 18 + Math.max(0, style.reserveShift || 0)) return;
+      if(Math.random() > .18) return;
+
+      const threes = [];
+      for(const p of livingPieces(owner).filter(x => x.type === 'P')){
+        for(const mv of legalMovesForPiece(p)){
+          if(mv.note !== 'paid 3-square pawn start' || mv.capture) continue;
+          if(!isDefaultGen(mv.r,mv.c) && Math.abs(3.5-mv.r)+Math.abs(3.5-mv.c) > 3) continue;
+          const money = estimateMoveMoneyResult(p,mv);
+          if(money.bankruptsSelf || aiMoveLeavesDangerousTurnTax(owner,money,getPieceAt(mv.r,mv.c))) continue;
+          threes.push({p,mv:{...mv},money});
+        }
+      }
+
+      let best = null;
+      let bestScore = -999;
+      for(let i=0;i<threes.length;i++){
+        for(let j=i+1;j<threes.length;j++){
+          const a = threes[i], b = threes[j];
+          if(a.p.id === b.p.id) continue;
+          if(a.mv.r === b.mv.r && a.mv.c === b.mv.c) continue;
+
+          const legalAfterFirst = withTemporaryMove(a.p,a.mv,() => legalMovesForPiece(b.p).some(m => m.r === b.mv.r && m.c === b.mv.c && m.note === b.mv.note));
+          if(!legalAfterFirst) continue;
+
+          const roughAfter = ps.gold - 6 - (a.mv.cost || 0) - (b.mv.cost || 0);
+          if(roughAfter <= reserve) continue;
+
+          let score = 44;
+          if(isDefaultGen(a.mv.r,a.mv.c)) score += 13;
+          if(isDefaultGen(b.mv.r,b.mv.c)) score += 13;
+          if(a.p.c === 3 || b.p.c === 3) score += 5;
+          score += Math.random() * 4;
+          if(score > bestScore){
+            bestScore = score;
+            best = {a,b,score};
+          }
+        }
+      }
+
+      if(best && best.score >= 56){
+        candidates.push({
+          type:'rareTwoThreeSquare',
+          score:best.score,
+          action:() => ({
+            aiSteps:[
+              () => {
+                log(`${label(owner)} AI gambles on two aggressive 3-square pawn pushes for opening space.`);
+                buyDoubleMove(owner);
+              },
+              () => executeMove(best.a.p.id,best.a.mv,false),
+              () => executeMove(best.b.p.id,best.b.mv,false)
+            ]
+          })
+        });
+      }
+    };
+
+    addSingleQueenFilePawn();
+    addSupportPawnDouble();
+    addRareTwoThreeSquarePawns();
+
+    if(!candidates.length) return null;
+    candidates.sort((a,b) => b.score - a.score);
+
+    // Weighted variety. The best line usually wins, but not always.
+    const top = candidates.slice(0,3);
+    const pick = top[Math.floor(Math.random() * Math.min(top.length, Math.random() < .68 ? 1 : top.length))];
+    return pick?.action || null;
+  }
+
   function chooseAiMoveThenGeneratorChipAction(owner){
     const ps = state.players[owner];
     if(!ps || !hasActionSlot(owner) || ps.doubleMovesRemaining || !hasKing(owner)) return null;
@@ -3933,6 +4120,12 @@
     const status = aiGeneratorGoalStatus(owner);
     if(!status.needsPush && status.ownIncome >= status.enemyIncome && status.ownChips >= status.enemyChips + 1) return null;
 
+    // This was firing too often and making the opening look dumb: Double Move,
+    // pawn two squares, instant chip, repeat. Keep it as a tactic, not the whole
+    // personality. It should be more likely when stealing, behind, or after the
+    // first opening fight has already started.
+    const early = state.turnNumber <= 14;
+    const badlyBehind = status.incomeBehind || status.enemyChips > status.ownChips;
     const reserve = status.incomeBehind ? Math.max(2, 5 + Math.min(2, style.reserveShift || 0)) : Math.max(4, 7 + Math.max(0, style.reserveShift || 0));
     let best = null;
     let bestScore = -99999;
@@ -3968,7 +4161,15 @@
       }
     }
 
-    if(!best || bestScore < (best.stealing ? 58 : 52)) return null;
+    if(!best) return null;
+
+    const threshold = best.stealing ? 58 : (early ? 68 : 56);
+    if(bestScore < threshold) return null;
+
+    const chance = best.stealing
+      ? (early ? .62 : .78)
+      : (badlyBehind ? (early ? .42 : .62) : (early ? .18 : .34));
+    if(Math.random() > chance) return null;
 
     return () => ({
       aiSteps:[
